@@ -368,7 +368,7 @@ function calculateContractFinancials(contract, settings) {
 
 /**
  * Koszt firmy (faktura kosztowa): netto obniża podstawę PIT/CIT (gdy włączone odliczanie kosztów),
- * VAT z faktury obniża VAT do zapłaty. Ulga podatkowa trafia na 20. dzień kolejnego miesiąca.
+ * VAT z faktury obniża VAT do zapłaty w miesiącu kosztu (rozliczenie miesięczne: buildTaxSchedule).
  */
 export const COST_CATEGORIES = ['Biuro i czynsz', 'Marketing', 'Narzędzia i IT', 'Transport', 'Szkolenia', 'Usługi obce', 'Inne'];
 const COST_VAT_OPTIONS = [23, 8, 5, 0];
@@ -433,7 +433,7 @@ export function buildTaxSchedule(contracts, costs, settings) {
     const key = monthKey(iso);
     if (!key) return null;
     if (!months[key]) {
-      months[key] = { key, revenueNet: 0, vatOut: 0, costsNet: 0, vatIn: 0 };
+      months[key] = { key, revenueNet: 0, vatOut: 0, costsNet: 0, vatIn: 0, sales: [], purchases: [] };
     }
     return months[key];
   };
@@ -446,21 +446,27 @@ export function buildTaxSchedule(contracts, costs, settings) {
       const vat = vatRate > 0 ? (gross * vatRate) / (100 + vatRate) : 0;
       m.vatOut += vat;
       m.revenueNet += gross - vat;
+      m.sales.push({ name: `${ctr.clientName} — ${inst.label || 'rata'}`, date: inst.dueDate, gross, net: gross - vat, vat });
     });
     const calc = calculateContractFinancials(ctr, settings);
     if (calc.effectiveSubCost > 0) {
-      const m = get(ctr.subDueDate || ctr.endDate);
+      const date = ctr.subDueDate || ctr.endDate;
+      const m = get(date);
       if (m) {
         m.costsNet += calc.effectiveSubCost;
         m.vatIn += calc.subVat;
+        m.purchases.push({ name: `Podwykonawca: ${ctr.subcontractorName || '—'} (${ctr.clientName})`, date, net: calc.effectiveSubCost, vat: calc.subVat, gross: calc.subGross });
       }
     }
     (Array.isArray(ctr.costs) ? ctr.costs : []).forEach((cost) => {
-      const m = get(cost.dueDate || ctr.endDate);
+      const date = cost.dueDate || ctr.endDate;
+      const m = get(date);
       if (!m) return;
       const net = Math.max(0, Number(cost.net) || 0);
+      const vat = (net * (Number(cost.vatRate) || 0)) / 100;
       m.costsNet += net;
-      m.vatIn += (net * (Number(cost.vatRate) || 0)) / 100;
+      m.vatIn += vat;
+      m.purchases.push({ name: `${cost.name || 'Koszt projektu'} (${ctr.clientName})`, date, net, vat, gross: net + vat });
     });
   });
 
@@ -468,8 +474,10 @@ export function buildTaxSchedule(contracts, costs, settings) {
     const m = get(cost.date);
     if (!m) return;
     const net = Math.max(0, Number(cost.netAmount) || 0);
+    const vat = (net * (Number(cost.vatRate) || 0)) / 100;
     m.costsNet += net;
-    m.vatIn += (net * (Number(cost.vatRate) || 0)) / 100;
+    m.vatIn += vat;
+    m.purchases.push({ name: `${cost.name || 'Koszt firmy'} (koszt firmy)`, date: cost.date, net, vat, gross: net + vat });
   });
 
   const sorted = Object.values(months).sort((a, b) => a.key.localeCompare(b.key));
@@ -502,6 +510,8 @@ export function buildTaxSchedule(contracts, costs, settings) {
       ytdBase += m.revenueNet - m.costsNet;
       m.ytdBase = round2(ytdBase);
       const dueYtd = Math.max(0, Math.round(Math.max(0, ytdBase) * (pitRate / 100)));
+      m.pitDueYtd = dueYtd;
+      m.pitPaidBefore = ytdAdvances;
       m.pitAdvance = Math.max(0, dueYtd - ytdAdvances);
       ytdAdvances += m.pitAdvance;
     } else {
@@ -529,8 +539,8 @@ export function buildTaxSchedule(contracts, costs, settings) {
   // Płatności podatków w dniach terminów (do wykresów i harmonogramu)
   const payments = [];
   sorted.forEach((m) => {
-    if (m.vatPayable > 0) payments.push({ date: m.vatDueDate, amount: m.vatPayable, kind: 'VAT', month: m.label });
-    if (m.pitAdvance > 0) payments.push({ date: m.pitDueDate, amount: m.pitAdvance, kind: 'PIT/CIT', month: m.label });
+    if (m.vatPayable > 0) payments.push({ date: m.vatDueDate, amount: m.vatPayable, kind: 'VAT', month: m.label, m });
+    if (m.pitAdvance > 0) payments.push({ date: m.pitDueDate, amount: m.pitAdvance, kind: 'PIT/CIT', month: m.label, m });
   });
 
   return { months: sorted, totals, payments };
@@ -2163,6 +2173,165 @@ function SettingsModal({ isOpen, onClose, settings, onSaveSettings }) {
 // WIDOK 1: HARMONOGRAM I OŚ CZASU (GANTT + CASH FLOW TYGODNIOWY)
 // ============================================================================
 
+// ============================================================================
+// OKNO ROZSZYFROWANIA KWOT (kliknięcie w kwotę na osi czasu)
+// ============================================================================
+
+function TaxPaymentDetails({ p, settings }) {
+  const m = p.m;
+  const rate = Number(settings.pitRate) || 0;
+  const row = (label, value, strong) => (
+    <div className={`flex justify-between gap-3 ${strong ? 'font-bold text-slate-900 border-t border-slate-200 pt-1' : 'text-slate-600'}`}>
+      <span>{label}</span>
+      <span className="whitespace-nowrap">{value}</span>
+    </div>
+  );
+  return (
+    <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-3 space-y-1.5 text-xs">
+      <div className="font-bold text-purple-900">
+        {p.kind === 'VAT' ? 'VAT' : 'Zaliczka PIT/CIT'} za {m.label} — termin {formatFullDate(p.date)}
+      </div>
+      {p.kind === 'VAT' ? (
+        <>
+          {row('VAT należny (ze sprzedaży w tym miesiącu)', formatPLN(m.vatOut))}
+          {row('− VAT naliczony (z faktur kosztowych w tym miesiącu)', `-${formatPLN(m.vatIn)}`)}
+          {m.vatCarryIn > 0 && row('− nadwyżka VAT z poprzednich miesięcy', `-${formatPLN(m.vatCarryIn)}`)}
+          {row('= VAT do zapłaty (do 25. dnia następnego miesiąca)', formatPLN(m.vatPayable), true)}
+          {m.vatCarryOut > 0 && row('Nadwyżka przechodzi na kolejny miesiąc', formatPLN(m.vatCarryOut))}
+        </>
+      ) : settings.deductSubcontractor ? (
+        <>
+          {row('Przychód netto w tym miesiącu', formatPLN(m.revenueNet))}
+          {row('− koszty netto w tym miesiącu', `-${formatPLN(m.costsNet)}`)}
+          {row(`Dochód narastająco od stycznia ${m.key.slice(0, 4)}`, formatPLN(m.ytdBase))}
+          {row(`× stawka ${rate}% = podatek narastająco`, formatPLN(m.pitDueYtd))}
+          {row('− zaliczki należne za wcześniejsze miesiące roku', `-${formatPLN(m.pitPaidBefore)}`)}
+          {row('= zaliczka do zapłaty (do 20. dnia następnego miesiąca)', formatPLN(m.pitAdvance), true)}
+        </>
+      ) : (
+        <>
+          {row('Przychód netto w tym miesiącu', formatPLN(m.revenueNet))}
+          {row(`× stawka ryczałtu ${rate}%`, '')}
+          {row('= podatek do zapłaty (do 20. dnia następnego miesiąca)', formatPLN(m.pitAdvance), true)}
+        </>
+      )}
+      <details className="pt-1">
+        <summary className="cursor-pointer text-purple-800 font-semibold">Z czego to wynika (dokumenty miesiąca)</summary>
+        <div className="mt-1.5 space-y-1">
+          <div className="font-semibold text-slate-700">Sprzedaż (raty klientów):</div>
+          {m.sales.length === 0 && <div className="text-slate-400">brak</div>}
+          {m.sales.map((s, i) => (
+            <div key={i} className="flex justify-between gap-2 text-slate-600">
+              <span>{formatFullDate(s.date)} • {s.name}</span>
+              <span className="whitespace-nowrap">netto {formatPLN(s.net)} • VAT {formatPLN(s.vat)}</span>
+            </div>
+          ))}
+          <div className="font-semibold text-slate-700 pt-1">Koszty (faktury kosztowe):</div>
+          {m.purchases.length === 0 && <div className="text-slate-400">brak</div>}
+          {m.purchases.map((s, i) => (
+            <div key={i} className="flex justify-between gap-2 text-slate-600">
+              <span>{formatFullDate(s.date)} • {s.name}</span>
+              <span className="whitespace-nowrap">netto {formatPLN(s.net)} • VAT {formatPLN(s.vat)}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function BreakdownModal({ data, onClose, settings }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const { title, subtitle, inflows = [], outflows = [], taxes = [], totals } = data;
+  const sumBy = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+
+  const ItemTable = ({ items, sign }) => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+          <th className="text-left py-1">Data • pozycja</th>
+          <th className="text-right py-1">Netto</th>
+          <th className="text-right py-1">VAT</th>
+          <th className="text-right py-1">Brutto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((it, i) => (
+          <tr key={i} className="border-b border-slate-100">
+            <td className="py-1 pr-2">{formatFullDate(it.date)} • {it.name}</td>
+            <td className="py-1 text-right whitespace-nowrap">{formatPLN(it.net)}</td>
+            <td className="py-1 text-right whitespace-nowrap">{formatPLN(it.vat)}</td>
+            <td className="py-1 text-right whitespace-nowrap font-bold">{sign}{formatPLN(it.gross)}</td>
+          </tr>
+        ))}
+        <tr className="font-bold">
+          <td className="py-1">Razem</td>
+          <td className="py-1 text-right">{formatPLN(sumBy(items, (x) => x.net))}</td>
+          <td className="py-1 text-right">{formatPLN(sumBy(items, (x) => x.vat))}</td>
+          <td className="py-1 text-right">{sign}{formatPLN(sumBy(items, (x) => x.gross))}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 grid place-items-center p-3" onClick={onClose}>
+      <div className="w-full max-w-2xl max-h-[88vh] overflow-y-auto bg-white rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-[#1E293B] text-white px-5 py-3.5 flex items-start justify-between gap-3 sticky top-0">
+          <div>
+            <span className="text-[10px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Szczegóły kwoty</span>
+            <h2 className="text-base font-bold">{title}</h2>
+            {subtitle && <div className="text-xs text-slate-300">{subtitle}</div>}
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-700 cursor-pointer" aria-label="Zamknij">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          {inflows.length > 0 && (
+            <div>
+              <div className="text-xs font-bold text-amber-900 mb-1">Wpływy od klientów (raty brutto)</div>
+              <ItemTable items={inflows} sign="+" />
+            </div>
+          )}
+          {outflows.length > 0 && (
+            <div>
+              <div className="text-xs font-bold text-rose-900 mb-1">Wydatki: koszty i podwykonawcy (brutto, w dniu płatności)</div>
+              <ItemTable items={outflows} sign="-" />
+            </div>
+          )}
+          {taxes.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-purple-900">Podatki płatne w tym okresie</div>
+              {taxes.map((p, i) => (
+                <TaxPaymentDetails key={i} p={p} settings={settings} />
+              ))}
+            </div>
+          )}
+          {inflows.length === 0 && outflows.length === 0 && taxes.length === 0 && (
+            <p className="text-xs text-slate-500">Brak płatności w tym okresie.</p>
+          )}
+          {totals && (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs space-y-1">
+              {totals.map(([label, value, strong], i) => (
+                <div key={i} className={`flex justify-between ${strong ? 'font-bold text-slate-900 border-t border-slate-200 pt-1' : 'text-slate-600'}`}>
+                  <span>{label}</span>
+                  <span>{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TimelineGanttView({
   contracts,
   costs = [],
@@ -2174,6 +2343,35 @@ function TimelineGanttView({
   onSelectContract
 }) {
   const [hoveredCell, setHoveredCell] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);
+  const weekTitle = (w) => `${w.label}: tydzień ${formatShortDate(w.start)}–${formatShortDate(w.end)}`;
+  const openBreakdown = (e, data) => {
+    e.stopPropagation();
+    setBreakdown(data);
+  };
+  const chipBtn = 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 transition';
+  const weekBreakdown = (w, mode) => {
+    const out = w.subOutflow + w.costOutflow + w.taxOutflow;
+    const base = { subtitle: weekTitle(w) };
+    if (mode === 'in') return { ...base, title: 'Wpływy od klientów', inflows: w.inflowItems };
+    if (mode === 'out') return { ...base, title: 'Wydatki (koszty + podatki)', outflows: w.outItems, taxes: w.taxItems, totals: [
+      ['Koszty i podwykonawcy (brutto)', `-${formatPLN(w.subOutflow + w.costOutflow)}`],
+      ['Podatki (VAT + PIT/CIT)', `-${formatPLN(w.taxOutflow)}`],
+      ['Razem wydatki', `-${formatPLN(out)}`, true]
+    ] };
+    const totals = [
+      ['+ Wpływy', `+${formatPLN(w.inflow)}`],
+      ['− Koszty i podwykonawcy', `-${formatPLN(w.subOutflow + w.costOutflow)}`],
+      ['− Podatki', `-${formatPLN(w.taxOutflow)}`],
+      ['= Saldo tygodnia', formatPLN(w.netBalance), true]
+    ];
+    if (mode === 'cum') {
+      totals.push(['Saldo narastające do poprzedniego tygodnia', formatPLN(w.cumulativeBalance - w.netBalance)]);
+      totals.push(['= Skumulowany cash flow (od początku osi czasu)', formatPLN(w.cumulativeBalance), true]);
+    }
+    return { ...base, title: mode === 'cum' ? 'Skumulowany cash flow' : 'Saldo tygodnia', inflows: w.inflowItems, outflows: w.outItems, taxes: w.taxItems, totals };
+  };
+  const footBtn = 'w-full cursor-pointer hover:underline';
 
   // Generowanie tablicy tygodni zaczynając od poniedziałku wybranego tygodnia
   const weeks = useMemo(() => {
@@ -2211,6 +2409,12 @@ function TimelineGanttView({
       const d = parseDate(iso);
       return d && d >= parseDate(w.start) && d <= parseDate(w.end);
     };
+    summary.forEach((s) => {
+      s.inflowItems = [];
+      s.outItems = [];
+      s.taxItems = [];
+    });
+    const vatR = Number(settings.vatRate) || 0;
     const costCells = weeks.map((w, wIdx) => {
       let out = 0;
       const items = [];
@@ -2218,11 +2422,13 @@ function TimelineGanttView({
         const cc = calculateCostFinancials(c, settings);
         if (inWeek(c.date, w)) {
           out += cc.gross;
-          items.push(c.name);
+          const it = { name: `${c.name} (koszt firmy${c.category ? ', ' + c.category : ''})`, date: c.date, net: cc.net, vat: cc.vat, gross: cc.gross };
+          items.push(it);
+          summary[wIdx].outItems.push(it);
         }
       });
       summary[wIdx].costOutflow += out;
-      return { weekIndex: wIdx, out, relief: 0, items };
+      return { weekIndex: wIdx, out, items };
     });
 
     // Podatki: płatności z miesięcznego rozliczenia (VAT do 25., PIT/CIT do 20. następnego miesiąca)
@@ -2231,6 +2437,7 @@ function TimelineGanttView({
       const items = schedule.payments.filter((p) => inWeek(p.date, w));
       const amount = items.reduce((s, p) => s + p.amount, 0);
       summary[wIdx].taxOutflow += amount;
+      summary[wIdx].taxItems.push(...items);
       return { weekIndex: wIdx, amount, items };
     });
 
@@ -2255,14 +2462,22 @@ function TimelineGanttView({
           return d && d >= wStartObj && d <= wEndObj;
         });
         const inflowAmt = weekInstallments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+        const inflowItems = weekInstallments.map((inst) => {
+          const gross = Number(inst.amount) || 0;
+          const vat = vatR > 0 ? (gross * vatR) / (100 + vatR) : 0;
+          return { name: `${ctr.clientName} — ${inst.label || 'rata'}${inst.paid ? ' (opłacona)' : ''}`, date: inst.dueDate, gross, net: gross - vat, vat };
+        });
+        summary[wIdx].inflowItems.push(...inflowItems);
 
         // Wypłata podwykonawcy przypadająca na ten tydzień
         // (kwoty brutto: tyle faktycznie wychodzi z konta)
         let subAmt = 0;
+        const outItems = [];
         if (calc.effectiveSubCost > 0 && ctr.subDueDate) {
           const subD = parseDate(ctr.subDueDate);
           if (subD && subD >= wStartObj && subD <= wEndObj) {
             subAmt = calc.subGross;
+            outItems.push({ name: `Podwykonawca: ${ctr.subcontractorName || '—'} (${ctr.clientName}, ${ctr.subStatus})`, date: ctr.subDueDate, net: calc.effectiveSubCost, vat: calc.subVat, gross: calc.subGross });
           }
         }
         // Faktury kosztowe przypadające na ten tydzień
@@ -2270,9 +2485,12 @@ function TimelineGanttView({
           const d = parseDate(cost.dueDate);
           if (d && d >= wStartObj && d <= wEndObj) {
             const net = Math.max(0, Number(cost.net) || 0);
-            subAmt += net + Math.round(net * ((Number(cost.vatRate) || 0) / 100));
+            const vat = Math.round(net * ((Number(cost.vatRate) || 0) / 100));
+            subAmt += net + vat;
+            outItems.push({ name: `${cost.name || 'Koszt projektu'} (${ctr.clientName})`, date: cost.dueDate, net, vat, gross: net + vat });
           }
         });
+        summary[wIdx].outItems.push(...outItems);
 
         // Podatki liczone są miesięcznie dla całej firmy (osobny wiersz „Podatki”)
         const taxAmt = 0;
@@ -2285,7 +2503,9 @@ function TimelineGanttView({
           isActive,
           inflowAmt,
           weekInstallments,
+          inflowItems,
           subAmt,
+          outItems,
           taxAmt
         };
       });
@@ -2455,14 +2675,22 @@ function TimelineGanttView({
 
                         <div className="flex flex-col gap-1 items-center">
                           {cell.inflowAmt > 0 && (
-                            <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px] leading-tight whitespace-nowrap shadow-2xs">
+                            <button
+                              type="button"
+                              onClick={(e) => openBreakdown(e, { title: `${contract.clientName}: wpływ od klienta`, subtitle: weekTitle(weeks[cell.weekIndex]), inflows: cell.inflowItems })}
+                              className={`px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px] leading-tight whitespace-nowrap shadow-2xs ${chipBtn}`}
+                            >
                               +{formatPLN(cell.inflowAmt)}
-                            </span>
+                            </button>
                           )}
                           {cell.subAmt > 0 && (
-                            <span className="px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-900 border border-rose-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={(e) => openBreakdown(e, { title: `${contract.clientName}: koszty umowy`, subtitle: weekTitle(weeks[cell.weekIndex]), outflows: cell.outItems })}
+                              className={`px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-900 border border-rose-300 font-bold text-[10px] leading-tight whitespace-nowrap ${chipBtn}`}
+                            >
                               -{formatPLN(cell.subAmt)}
-                            </span>
+                            </button>
                           )}
                           {cell.taxAmt > 0 && (
                             <span className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px] leading-tight whitespace-nowrap">
@@ -2489,18 +2717,17 @@ function TimelineGanttView({
                   <td
                     key={cell.weekIndex}
                     className="p-1 border-r border-slate-200/60 align-middle text-center"
-                    title={cell.items.join(', ')}
+                    title={cell.items.map((i) => i.name).join(', ')}
                   >
                     <div className="flex flex-col gap-1 items-center">
                       {cell.out > 0 && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-900 border border-orange-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => openBreakdown(e, { title: 'Koszty firmy', subtitle: weekTitle(weeks[cell.weekIndex]), outflows: cell.items })}
+                          className={`px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-900 border border-orange-300 font-bold text-[10px] leading-tight whitespace-nowrap ${chipBtn}`}
+                        >
                           -{formatPLN(cell.out)}
-                        </span>
-                      )}
-                      {cell.relief > 0 && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10px] leading-tight whitespace-nowrap">
-                          ulga +{formatPLN(cell.relief)}
-                        </span>
+                        </button>
                       )}
                     </div>
                   </td>
@@ -2523,12 +2750,14 @@ function TimelineGanttView({
                 >
                   <div className="flex flex-col gap-1 items-center">
                     {cell.items.map((p, i) => (
-                      <span
+                      <button
+                        type="button"
                         key={i}
-                        className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px] leading-tight whitespace-nowrap"
+                        onClick={(e) => openBreakdown(e, { title: `${p.kind === 'VAT' ? 'VAT' : 'Zaliczka PIT/CIT'} za ${p.month}`, subtitle: `Termin płatności: ${formatFullDate(p.date)}`, taxes: [p] })}
+                        className={`px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px] leading-tight whitespace-nowrap ${chipBtn}`}
                       >
                         {p.kind} -{formatPLN(p.amount)}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </td>
@@ -2551,7 +2780,11 @@ function TimelineGanttView({
                   key={w.index}
                   className="px-1.5 py-2 text-center border-r border-slate-200/70 text-amber-900 whitespace-nowrap"
                 >
-                  {w.inflow > 0 ? `+${formatPLN(w.inflow)}` : '—'}
+                  {w.inflow > 0 ? (
+                    <button type="button" className={footBtn} onClick={(e) => openBreakdown(e, weekBreakdown(w, 'in'))}>
+                      +{formatPLN(w.inflow)}
+                    </button>
+                  ) : '—'}
                 </td>
               ))}
             </tr>
@@ -2571,7 +2804,11 @@ function TimelineGanttView({
                     key={w.index}
                     className="px-1.5 py-2 text-center border-r border-slate-200/70 text-rose-800 whitespace-nowrap"
                   >
-                    {totalOut !== 0 ? `${totalOut > 0 ? '-' : '+'}${formatPLN(Math.abs(totalOut))}` : '—'}
+                    {totalOut !== 0 ? (
+                      <button type="button" className={footBtn} onClick={(e) => openBreakdown(e, weekBreakdown(w, 'out'))}>
+                        {`${totalOut > 0 ? '-' : '+'}${formatPLN(Math.abs(totalOut))}`}
+                      </button>
+                    ) : '—'}
                   </td>
                 );
               })}
@@ -2596,9 +2833,11 @@ function TimelineGanttView({
                       : 'text-slate-400'
                   }`}
                 >
-                  {w.netBalance !== 0
-                    ? `${w.netBalance > 0 ? '+' : ''}${formatPLN(w.netBalance)}`
-                    : '0 zł'}
+                  <button type="button" className={footBtn} onClick={(e) => openBreakdown(e, weekBreakdown(w, 'saldo'))}>
+                    {w.netBalance !== 0
+                      ? `${w.netBalance > 0 ? '+' : ''}${formatPLN(w.netBalance)}`
+                      : '0 zł'}
+                  </button>
                 </td>
               ))}
             </tr>
@@ -2618,13 +2857,17 @@ function TimelineGanttView({
                     w.cumulativeBalance >= 0 ? 'text-emerald-300' : 'text-rose-300'
                   }`}
                 >
-                  {formatPLN(w.cumulativeBalance)}
+                  <button type="button" className={footBtn} onClick={(e) => openBreakdown(e, weekBreakdown(w, 'cum'))}>
+                    {formatPLN(w.cumulativeBalance)}
+                  </button>
                 </td>
               ))}
             </tr>
           </tfoot>
         </table>
       </div>
+
+      {breakdown && <BreakdownModal data={breakdown} onClose={() => setBreakdown(null)} settings={settings} />}
 
       {/* Pływający pasek szczegółów po najechaniu na komórkę */}
       <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex items-center justify-between min-h-[38px]">
@@ -3316,7 +3559,7 @@ function AnalyticsView({ contracts, costs = [], settings }) {
                 <div className="flex justify-between text-[11px] text-slate-600">
                   <span>Koszty netto: -{formatPLN(serviceStats.shared.net)}</span>
                   <span className="text-emerald-700">
-                    Ulga VAT + PIT/CIT: +{formatPLN(serviceStats.shared.relief)}
+                    Obniża podatki (VAT + PIT/CIT) o {formatPLN(serviceStats.shared.relief)}
                   </span>
                 </div>
                 <div className="flex justify-between text-[11px] font-bold text-slate-800 pt-1 border-t border-orange-200">
@@ -3437,7 +3680,7 @@ function CostModal({ isOpen, onClose, onSave, onDelete, initialCost, settings })
               <b className="text-emerald-700">-{formatPLN(calc.citRelief)}</b>
             </div>
             <div className="flex justify-between pt-1.5 border-t border-slate-200 font-bold text-slate-800">
-              <span>Rzeczywisty koszt po uldze podatkowej:</span><span>{formatPLN(calc.gross - calc.taxRelief)}</span>
+              <span>Rzeczywisty koszt po obniżeniu podatków:</span><span>{formatPLN(calc.gross - calc.taxRelief)}</span>
             </div>
             {form.date && monthKey(form.date) && (
               <div className="text-[11px] text-slate-500">
@@ -3506,7 +3749,7 @@ function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
               <th className="px-3 py-3 text-right">Netto</th>
               <th className="px-3 py-3 text-right">VAT</th>
               <th className="px-3 py-3 text-right">Brutto</th>
-              <th className="px-3 py-3 text-right">Ulga VAT + PIT/CIT</th>
+              <th className="px-3 py-3 text-right">Obniża podatki o</th>
               <th className="px-3 py-3 text-center">Status</th>
               <th className="px-3 py-3" />
             </tr>
