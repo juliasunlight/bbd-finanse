@@ -30,7 +30,8 @@ import {
   Check,
   Info,
   LogOut,
-  UserPlus
+  UserPlus,
+  Printer
 } from 'lucide-react';
 
 // ============================================================================
@@ -383,6 +384,505 @@ function calculateCostFinancials(cost, settings) {
   const taxRelief = vat + citRelief;
   const reliefDate = cost.date ? getNextMonth20th(cost.date) : '';
   return { net, vat, gross, citRelief, taxRelief, reliefDate };
+}
+
+// ============================================================================
+// MIESIĘCZNE ROZLICZENIE PODATKÓW (VAT miesięczny, zaliczki PIT/CIT miesięczne)
+// ----------------------------------------------------------------------------
+// • VAT należny powstaje w miesiącu raty klienta (data raty = data faktury sprzedaży).
+//   Rata jest kwotą brutto, więc VAT = rata × stawka / (100 + stawka).
+// • VAT naliczony: faktury podwykonawców (termin wypłaty), koszty projektów (termin płatności)
+//   i koszty firmy (data kosztu) – w miesiącu faktury.
+// • VAT do zapłaty za miesiąc M = należny − naliczony − nadwyżka z poprzednich miesięcy;
+//   nadwyżka przechodzi na kolejny miesiąc. Termin: 25. dzień miesiąca M+1.
+// • Zaliczka PIT/CIT za miesiąc M (termin: 20. dzień miesiąca M+1):
+//   – przy odliczaniu kosztów: metoda narastająca w roku podatkowym:
+//     stawka × (przychody − koszty od stycznia do M) − zaliczki już należne w tym roku;
+//   – ryczałt (bez odliczania kosztów): stawka × przychód netto miesiąca M.
+// ============================================================================
+
+const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+function monthKey(iso) {
+  const d = parseDate(iso);
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function nextMonthDay(key, day) {
+  const [y, m] = key.split('-').map(Number);
+  return toISODate(new Date(y, m, day)); // m (1–12) jako indeks = kolejny miesiąc
+}
+
+const MONTH_NAMES_PL = [
+  'styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec',
+  'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień'
+];
+
+function monthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  return `${MONTH_NAMES_PL[m - 1]} ${y}`;
+}
+
+export function buildTaxSchedule(contracts, costs, settings) {
+  const vatRate = Number(settings.vatRate) || 0;
+  const pitRate = Number(settings.pitRate) || 0;
+  const deduct = Boolean(settings.deductSubcontractor);
+  const months = {};
+  const get = (iso) => {
+    const key = monthKey(iso);
+    if (!key) return null;
+    if (!months[key]) {
+      months[key] = { key, revenueNet: 0, vatOut: 0, costsNet: 0, vatIn: 0 };
+    }
+    return months[key];
+  };
+
+  (contracts || []).forEach((ctr) => {
+    (ctr.installments || []).forEach((inst) => {
+      const m = get(inst.dueDate);
+      if (!m) return;
+      const gross = Number(inst.amount) || 0;
+      const vat = vatRate > 0 ? (gross * vatRate) / (100 + vatRate) : 0;
+      m.vatOut += vat;
+      m.revenueNet += gross - vat;
+    });
+    const calc = calculateContractFinancials(ctr, settings);
+    if (calc.effectiveSubCost > 0) {
+      const m = get(ctr.subDueDate || ctr.endDate);
+      if (m) {
+        m.costsNet += calc.effectiveSubCost;
+        m.vatIn += calc.subVat;
+      }
+    }
+    (Array.isArray(ctr.costs) ? ctr.costs : []).forEach((cost) => {
+      const m = get(cost.dueDate || ctr.endDate);
+      if (!m) return;
+      const net = Math.max(0, Number(cost.net) || 0);
+      m.costsNet += net;
+      m.vatIn += (net * (Number(cost.vatRate) || 0)) / 100;
+    });
+  });
+
+  (costs || []).forEach((cost) => {
+    const m = get(cost.date);
+    if (!m) return;
+    const net = Math.max(0, Number(cost.netAmount) || 0);
+    m.costsNet += net;
+    m.vatIn += (net * (Number(cost.vatRate) || 0)) / 100;
+  });
+
+  const sorted = Object.values(months).sort((a, b) => a.key.localeCompare(b.key));
+  let vatCarry = 0;
+  let year = '';
+  let ytdBase = 0;
+  let ytdAdvances = 0;
+  sorted.forEach((m) => {
+    m.revenueNet = round2(m.revenueNet);
+    m.vatOut = round2(m.vatOut);
+    m.costsNet = round2(m.costsNet);
+    m.vatIn = round2(m.vatIn);
+
+    // VAT z przeniesieniem nadwyżki
+    m.vatCarryIn = round2(vatCarry);
+    const vatBalance = round2(m.vatOut - m.vatIn - vatCarry);
+    m.vatPayable = vatBalance > 0 ? Math.round(vatBalance) : 0; // VAT wpłaca się w pełnych złotych
+    vatCarry = vatBalance < 0 ? -vatBalance : 0;
+    m.vatCarryOut = round2(vatCarry);
+    m.vatDueDate = nextMonthDay(m.key, 25);
+
+    // Zaliczka PIT/CIT
+    const y = m.key.slice(0, 4);
+    if (y !== year) {
+      year = y;
+      ytdBase = 0;
+      ytdAdvances = 0;
+    }
+    if (deduct) {
+      ytdBase += m.revenueNet - m.costsNet;
+      m.ytdBase = round2(ytdBase);
+      const dueYtd = Math.max(0, Math.round(Math.max(0, ytdBase) * (pitRate / 100)));
+      m.pitAdvance = Math.max(0, dueYtd - ytdAdvances);
+      ytdAdvances += m.pitAdvance;
+    } else {
+      m.ytdBase = null;
+      m.pitAdvance = Math.max(0, Math.round(m.revenueNet * (pitRate / 100)));
+    }
+    m.pitDueDate = nextMonthDay(m.key, 20);
+    m.totalPayable = m.vatPayable + m.pitAdvance;
+    m.label = monthLabel(m.key);
+  });
+
+  const totals = sorted.reduce(
+    (t, m) => ({
+      revenueNet: t.revenueNet + m.revenueNet,
+      costsNet: t.costsNet + m.costsNet,
+      vatOut: t.vatOut + m.vatOut,
+      vatIn: t.vatIn + m.vatIn,
+      vatPayable: t.vatPayable + m.vatPayable,
+      pitAdvance: t.pitAdvance + m.pitAdvance
+    }),
+    { revenueNet: 0, costsNet: 0, vatOut: 0, vatIn: 0, vatPayable: 0, pitAdvance: 0 }
+  );
+  totals.vatCarryLeft = round2(vatCarry);
+
+  // Płatności podatków w dniach terminów (do wykresów i harmonogramu)
+  const payments = [];
+  sorted.forEach((m) => {
+    if (m.vatPayable > 0) payments.push({ date: m.vatDueDate, amount: m.vatPayable, kind: 'VAT', month: m.label });
+    if (m.pitAdvance > 0) payments.push({ date: m.pitDueDate, amount: m.pitAdvance, kind: 'PIT/CIT', month: m.label });
+  });
+
+  return { months: sorted, totals, payments };
+}
+
+// ============================================================================
+// FORMULARZE DO DRUKU (raport podatkowy, umowy i raty, koszty, karta umowy)
+// ============================================================================
+
+const pCell = 'border border-slate-400 px-1.5 py-1 align-top';
+const pHead = `${pCell} bg-slate-100 font-bold text-left`;
+const pNum = `${pCell} text-right whitespace-nowrap`;
+
+function PrintView({ onClose, contracts, costs, settings, workspaceName }) {
+  const [form, setForm] = useState('tax');
+  const [contractId, setContractId] = useState(contracts[0]?.id || '');
+  const [year, setYear] = useState('all');
+
+  const schedule = useMemo(() => buildTaxSchedule(contracts, costs, settings), [contracts, costs, settings]);
+  const years = Array.from(new Set(schedule.months.map((m) => m.key.slice(0, 4))));
+  const months = year === 'all' ? schedule.months : schedule.months.filter((m) => m.key.startsWith(year));
+  const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const today = formatFullDate(toISODate(new Date()));
+  const contract = contracts.find((c) => c.id === contractId);
+
+  const Header = ({ title }) => (
+    <div className="flex items-start justify-between border-b-2 border-slate-800 pb-2 mb-3">
+      <div>
+        <div className="text-[10px] font-bold tracking-[0.2em] text-slate-500">JACEK SZELA • BIZNES BEZ DRAMATÓW</div>
+        <h1 className="text-lg font-bold text-slate-900">{title}</h1>
+        <div className="text-xs text-slate-600">Firma: {workspaceName}</div>
+      </div>
+      <div className="text-right text-[11px] text-slate-600">
+        Data wydruku: {today}
+        <br />
+        VAT {settings.vatRate}% • PIT/CIT {settings.pitRate}%
+        {settings.deductSubcontractor ? ' (od dochodu)' : ' (ryczałt od przychodu)'}
+      </div>
+    </div>
+  );
+
+  const Signatures = () => (
+    <div className="grid grid-cols-2 gap-10 mt-10 text-[11px] text-slate-600">
+      <div className="border-t border-slate-500 pt-1 text-center">Sporządził(a)</div>
+      <div className="border-t border-slate-500 pt-1 text-center">Zatwierdził(a)</div>
+    </div>
+  );
+
+  return (
+    <div className="print-overlay fixed inset-0 z-[60] bg-slate-200/90 overflow-y-auto">
+      <div className="no-print sticky top-0 z-10 bg-[#1E293B] text-white px-4 py-3 flex flex-wrap items-center gap-2 justify-between">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-bold mr-1">Formularz do druku:</span>
+          {[
+            ['tax', 'Raport podatkowy (miesięczny)'],
+            ['contracts', 'Umowy i harmonogram rat'],
+            ['costs', 'Koszty firmy'],
+            ['card', 'Karta umowy']
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setForm(id)}
+              className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${form === id ? 'bg-white text-slate-900' : 'bg-slate-700 hover:bg-slate-600'}`}
+            >
+              {label}
+            </button>
+          ))}
+          {form === 'tax' && years.length > 0 && (
+            <select value={year} onChange={(e) => setYear(e.target.value)} className="px-2 py-1.5 rounded-lg text-slate-900">
+              <option value="all">Wszystkie lata</option>
+              {years.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          )}
+          {form === 'card' && (
+            <select value={contractId} onChange={(e) => setContractId(e.target.value)} className="px-2 py-1.5 rounded-lg text-slate-900 max-w-[220px]">
+              {contracts.map((c) => (
+                <option key={c.id} value={c.id}>{c.clientName} — {c.serviceName}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => window.print()} className="px-4 py-1.5 rounded-lg bg-[#991B1B] hover:bg-[#B91C1C] text-xs font-bold cursor-pointer">
+            Drukuj / zapisz PDF
+          </button>
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold cursor-pointer">
+            Zamknij
+          </button>
+        </div>
+      </div>
+
+      <div id="print-area" className="bg-white text-slate-900 max-w-[1000px] mx-auto my-4 p-6 sm:p-8 shadow-lg text-[11px] leading-snug">
+        {form === 'tax' && (
+          <>
+            <Header title="Miesięczny harmonogram podatków (VAT i zaliczki PIT/CIT)" />
+            <p className="mb-2 text-slate-600">
+              VAT rozliczany miesięcznie, płatny do 25. dnia następnego miesiąca; nadwyżka VAT naliczonego
+              przechodzi na kolejny miesiąc. Zaliczka PIT/CIT płatna do 20. dnia następnego miesiąca
+              {settings.deductSubcontractor ? ', liczona narastająco od początku roku (przychody − koszty).' : ', liczona od przychodu (ryczałt).'}
+            </p>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={pHead}>Miesiąc</th>
+                  <th className={pHead}>Przychód netto</th>
+                  <th className={pHead}>Koszty netto</th>
+                  <th className={pHead}>VAT należny</th>
+                  <th className={pHead}>VAT naliczony</th>
+                  <th className={pHead}>Nadwyżka z poprz.</th>
+                  <th className={pHead}>VAT do zapłaty</th>
+                  <th className={pHead}>Termin VAT</th>
+                  <th className={pHead}>Zaliczka PIT/CIT</th>
+                  <th className={pHead}>Termin PIT/CIT</th>
+                  <th className={pHead}>Razem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {months.length === 0 && (
+                  <tr><td className={pCell} colSpan={11}>Brak danych.</td></tr>
+                )}
+                {months.map((m) => (
+                  <tr key={m.key}>
+                    <td className={pCell}>{m.label}</td>
+                    <td className={pNum}>{formatPLN(m.revenueNet)}</td>
+                    <td className={pNum}>{formatPLN(m.costsNet)}</td>
+                    <td className={pNum}>{formatPLN(m.vatOut)}</td>
+                    <td className={pNum}>{formatPLN(m.vatIn)}</td>
+                    <td className={pNum}>{m.vatCarryIn ? formatPLN(m.vatCarryIn) : '—'}</td>
+                    <td className={`${pNum} font-bold`}>{formatPLN(m.vatPayable)}</td>
+                    <td className={pNum}>{formatFullDate(m.vatDueDate)}</td>
+                    <td className={`${pNum} font-bold`}>{formatPLN(m.pitAdvance)}</td>
+                    <td className={pNum}>{formatFullDate(m.pitDueDate)}</td>
+                    <td className={`${pNum} font-bold`}>{formatPLN(m.totalPayable)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 font-bold">
+                  <td className={pCell}>Razem</td>
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.revenueNet))}</td>
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.costsNet))}</td>
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatOut))}</td>
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatIn))}</td>
+                  <td className={pNum} />
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatPayable))}</td>
+                  <td className={pNum} />
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.pitAdvance))}</td>
+                  <td className={pNum} />
+                  <td className={pNum}>{formatPLN(sum(months, (m) => m.totalPayable))}</td>
+                </tr>
+              </tfoot>
+            </table>
+            {schedule.totals.vatCarryLeft > 0 && (
+              <p className="mt-2">Nadwyżka VAT do przeniesienia na kolejne miesiące: <b>{formatPLN(schedule.totals.vatCarryLeft)}</b></p>
+            )}
+            <p className="mt-2 text-slate-500">
+              Data raty klienta traktowana jest jako data faktury sprzedaży. Kwoty orientacyjne, do weryfikacji z księgowością.
+            </p>
+            <Signatures />
+          </>
+        )}
+
+        {form === 'contracts' && (
+          <>
+            <Header title="Zestawienie umów i harmonogram rat" />
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={pHead}>Klient / usługa</th>
+                  <th className={pHead}>Status</th>
+                  <th className={pHead}>Okres</th>
+                  <th className={pHead}>Netto</th>
+                  <th className={pHead}>Brutto</th>
+                  <th className={pHead}>Raty (brutto, termin, status)</th>
+                  <th className={pHead}>Koszty netto</th>
+                  <th className={pHead}>Zysk netto (szac.)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contracts.map((ctr) => {
+                  const c = calculateContractFinancials(ctr, settings);
+                  return (
+                    <tr key={ctr.id}>
+                      <td className={pCell}><b>{ctr.clientName}</b><br />{ctr.serviceName}</td>
+                      <td className={pCell}>{ctr.status}</td>
+                      <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(ctr.startDate)}<br />{formatFullDate(ctr.endDate)}</td>
+                      <td className={pNum}>{formatPLN(c.netValue)}</td>
+                      <td className={pNum}>{formatPLN(c.grossValue)}</td>
+                      <td className={pCell}>
+                        {(ctr.installments || []).map((i) => (
+                          <div key={i.id} className="whitespace-nowrap">
+                            {formatPLN(i.amount)} • {formatFullDate(i.dueDate)} • {i.paid ? 'opłacona' : 'oczekuje'}
+                          </div>
+                        ))}
+                      </td>
+                      <td className={pNum}>{formatPLN(c.totalCostsNet)}</td>
+                      <td className={pNum}>{formatPLN(c.netProfit)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 font-bold">
+                  <td className={pCell} colSpan={3}>Razem ({contracts.length})</td>
+                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).netValue))}</td>
+                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).grossValue))}</td>
+                  <td className={pCell}>Wpłacono: {formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).paidGross))}</td>
+                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).totalCostsNet))}</td>
+                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).netProfit))}</td>
+                </tr>
+              </tfoot>
+            </table>
+            <Signatures />
+          </>
+        )}
+
+        {form === 'costs' && (
+          <>
+            <Header title="Zestawienie kosztów firmy (faktury kosztowe)" />
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={pHead}>Data</th>
+                  <th className={pHead}>Nazwa</th>
+                  <th className={pHead}>Kategoria</th>
+                  <th className={pHead}>Produkt</th>
+                  <th className={pHead}>Netto</th>
+                  <th className={pHead}>VAT</th>
+                  <th className={pHead}>Brutto</th>
+                  <th className={pHead}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {costs.length === 0 && <tr><td className={pCell} colSpan={8}>Brak kosztów.</td></tr>}
+                {[...costs].sort((a, b) => String(a.date).localeCompare(String(b.date))).map((c) => {
+                  const cc = calculateCostFinancials(c, settings);
+                  return (
+                    <tr key={c.id}>
+                      <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(c.date)}</td>
+                      <td className={pCell}>{c.name}</td>
+                      <td className={pCell}>{c.category}</td>
+                      <td className={pCell}>{c.serviceName || 'wspólny'}</td>
+                      <td className={pNum}>{formatPLN(cc.net)}</td>
+                      <td className={pNum}>{formatPLN(cc.vat)} ({Number(c.vatRate) || 0}%)</td>
+                      <td className={pNum}>{formatPLN(cc.gross)}</td>
+                      <td className={pCell}>{c.paid ? 'zapłacono' : 'do zapłaty'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 font-bold">
+                  <td className={pCell} colSpan={4}>Razem ({costs.length})</td>
+                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).net))}</td>
+                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).vat))}</td>
+                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).gross))}</td>
+                  <td className={pCell} />
+                </tr>
+              </tfoot>
+            </table>
+            <Signatures />
+          </>
+        )}
+
+        {form === 'card' && (
+          contract ? (() => {
+            const c = calculateContractFinancials(contract, settings);
+            return (
+              <>
+                <Header title={`Karta umowy: ${contract.clientName}`} />
+                <table className="w-full border-collapse mb-3">
+                  <tbody>
+                    <tr><td className={pHead}>Klient</td><td className={pCell}>{contract.clientName}</td><td className={pHead}>Usługa</td><td className={pCell}>{contract.serviceName}</td></tr>
+                    <tr><td className={pHead}>Okres</td><td className={pCell}>{formatFullDate(contract.startDate)} – {formatFullDate(contract.endDate)} ({c.durationDays} dni)</td><td className={pHead}>Status</td><td className={pCell}>{contract.status}</td></tr>
+                    <tr><td className={pHead}>Wartość netto</td><td className={pNum}>{formatPLN(c.netValue)}</td><td className={pHead}>VAT {settings.vatRate}%</td><td className={pNum}>{formatPLN(c.vatAmount)}</td></tr>
+                    <tr><td className={pHead}>Wartość brutto</td><td className={pNum}>{formatPLN(c.grossValue)}</td><td className={pHead}>Wpłacono / pozostało</td><td className={pNum}>{formatPLN(c.paidGross)} / {formatPLN(c.remainingGross)}</td></tr>
+                  </tbody>
+                </table>
+
+                <div className="font-bold mb-1">Harmonogram rat klienta</div>
+                <table className="w-full border-collapse mb-3">
+                  <thead><tr><th className={pHead}>Rata</th><th className={pHead}>Termin (data faktury)</th><th className={pHead}>Kwota brutto</th><th className={pHead}>w tym VAT</th><th className={pHead}>VAT płatny do</th><th className={pHead}>Status</th></tr></thead>
+                  <tbody>
+                    {(contract.installments || []).map((i) => {
+                      const r = Number(settings.vatRate) || 0;
+                      const vat = r > 0 ? ((Number(i.amount) || 0) * r) / (100 + r) : 0;
+                      return (
+                        <tr key={i.id}>
+                          <td className={pCell}>{i.label}</td>
+                          <td className={pCell}>{formatFullDate(i.dueDate)}</td>
+                          <td className={pNum}>{formatPLN(i.amount)}</td>
+                          <td className={pNum}>{formatPLN(vat)}</td>
+                          <td className={pCell}>{i.dueDate ? formatFullDate(nextMonthDay(monthKey(i.dueDate), 25)) : '—'}</td>
+                          <td className={pCell}>{i.paid ? 'opłacona' : 'oczekuje'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <div className="font-bold mb-1">Koszty umowy</div>
+                <table className="w-full border-collapse mb-3">
+                  <thead><tr><th className={pHead}>Pozycja</th><th className={pHead}>Termin</th><th className={pHead}>Netto</th><th className={pHead}>VAT</th><th className={pHead}>Brutto</th><th className={pHead}>Status</th></tr></thead>
+                  <tbody>
+                    {c.effectiveSubCost > 0 && (
+                      <tr>
+                        <td className={pCell}>Podwykonawca: {contract.subcontractorName || '—'}</td>
+                        <td className={pCell}>{formatFullDate(contract.subDueDate)}</td>
+                        <td className={pNum}>{formatPLN(c.effectiveSubCost)}</td>
+                        <td className={pNum}>{formatPLN(c.subVat)}</td>
+                        <td className={pNum}>{formatPLN(c.subGross)}</td>
+                        <td className={pCell}>{contract.subStatus}</td>
+                      </tr>
+                    )}
+                    {(contract.costs || []).map((k) => {
+                      const net = Math.max(0, Number(k.net) || 0);
+                      const vat = Math.round(net * ((Number(k.vatRate) || 0) / 100));
+                      return (
+                        <tr key={k.id}>
+                          <td className={pCell}>{k.name || 'Koszt'}</td>
+                          <td className={pCell}>{formatFullDate(k.dueDate)}</td>
+                          <td className={pNum}>{formatPLN(net)}</td>
+                          <td className={pNum}>{formatPLN(vat)}</td>
+                          <td className={pNum}>{formatPLN(net + vat)}</td>
+                          <td className={pCell}>{k.paid ? 'zapłacono' : 'do zapłaty'}</td>
+                        </tr>
+                      );
+                    })}
+                    {c.totalCostsNet === 0 && <tr><td className={pCell} colSpan={6}>Brak kosztów.</td></tr>}
+                  </tbody>
+                </table>
+
+                <div className="font-bold mb-1">Wynik umowy (szacunek)</div>
+                <table className="w-full border-collapse">
+                  <tbody>
+                    <tr><td className={pHead}>VAT należny</td><td className={pNum}>{formatPLN(c.vatAmount)}</td><td className={pHead}>VAT naliczony z kosztów</td><td className={pNum}>{formatPLN(c.inputVat)}</td></tr>
+                    <tr><td className={pHead}>VAT do zapłaty</td><td className={pNum}>{formatPLN(Math.max(0, c.vatPayable))}</td><td className={pHead}>PIT/CIT {settings.pitRate}%</td><td className={pNum}>{formatPLN(c.pitAmount)}</td></tr>
+                    <tr><td className={pHead}>Koszty netto razem</td><td className={pNum}>{formatPLN(c.totalCostsNet)}</td><td className={pHead}>Zysk netto po podatkach</td><td className={`${pNum} font-bold`}>{formatPLN(c.netProfit)} ({c.netMargin.toFixed(1)}%)</td></tr>
+                  </tbody>
+                </table>
+                {contract.notes && <p className="mt-2"><b>Notatki:</b> {contract.notes}</p>}
+                <Signatures />
+              </>
+            );
+          })() : <p>Brak umów.</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ============================================================================
@@ -1143,32 +1643,26 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
                   4. Podatki i podgląd wyniku netto
                 </h3>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Termin płatności podatków (VAT + PIT/CIT)
-                    </label>
-                    {formData.endDate && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFormData({
-                            ...formData,
-                            taxDueDate: getNextMonth20th(formData.endDate)
-                          })
-                        }
-                        className="text-[11px] font-semibold text-purple-700 hover:underline"
-                      >
-                        Ustaw 20. dzień po zakończeniu
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="date"
-                    value={formData.taxDueDate}
-                    onChange={(e) => setFormData({ ...formData, taxDueDate: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
-                  />
+                <div className="text-[11px] text-slate-600 space-y-1">
+                  <p>
+                    Podatki płacisz <strong>co miesiąc</strong>: VAT do 25., zaliczkę PIT/CIT do 20.
+                    dnia następnego miesiąca. Terminy wyliczają się same z dat rat (data raty = data
+                    faktury).
+                  </p>
+                  {(formData.installments || []).filter((i) => i.dueDate).map((inst, idx) => {
+                    const gross = Number(inst.amount) || 0;
+                    const r = Number(settings.vatRate) || 0;
+                    const vat = r > 0 ? Math.round((gross * r) / (100 + r)) : 0;
+                    const key = monthKey(inst.dueDate);
+                    return (
+                      <div key={inst.id || idx} className="flex justify-between bg-white/70 rounded-lg px-2 py-1 border border-purple-100">
+                        <span>{inst.label || `Rata ${idx + 1}`}: VAT za {monthLabel(key)}</span>
+                        <span className="font-semibold">
+                          {formatPLN(vat)} do {formatFullDate(nextMonthDay(key, 25))}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1700,7 +2194,7 @@ function TimelineGanttView({
   }, [timelineStart, weeksCount]);
 
   // Przeliczenie macierzy komórek i sum tygodniowych
-  const { rowsData, weeklySummary, costRow } = useMemo(() => {
+  const { rowsData, weeklySummary, costRow, taxRow } = useMemo(() => {
     const summary = weeks.map((w) => ({
       ...w,
       inflow: 0,
@@ -1712,14 +2206,13 @@ function TimelineGanttView({
       cumulativeBalance: 0
     }));
 
-    // Koszty firmy: wypływ brutto w dniu kosztu, ulga podatkowa (VAT + PIT/CIT) 20. dnia kolejnego miesiąca
+    // Koszty firmy: wypływ brutto w dniu kosztu (ich VAT i PIT/CIT są już w miesięcznym rozliczeniu podatków)
     const inWeek = (iso, w) => {
       const d = parseDate(iso);
       return d && d >= parseDate(w.start) && d <= parseDate(w.end);
     };
     const costCells = weeks.map((w, wIdx) => {
       let out = 0;
-      let relief = 0;
       const items = [];
       costs.forEach((c) => {
         const cc = calculateCostFinancials(c, settings);
@@ -1727,11 +2220,18 @@ function TimelineGanttView({
           out += cc.gross;
           items.push(c.name);
         }
-        if (cc.taxRelief > 0 && inWeek(cc.reliefDate, w)) relief += cc.taxRelief;
       });
       summary[wIdx].costOutflow += out;
-      summary[wIdx].taxRelief += relief;
-      return { weekIndex: wIdx, out, relief, items };
+      return { weekIndex: wIdx, out, relief: 0, items };
+    });
+
+    // Podatki: płatności z miesięcznego rozliczenia (VAT do 25., PIT/CIT do 20. następnego miesiąca)
+    const schedule = buildTaxSchedule(contracts, costs, settings);
+    const taxCells = weeks.map((w, wIdx) => {
+      const items = schedule.payments.filter((p) => inWeek(p.date, w));
+      const amount = items.reduce((s, p) => s + p.amount, 0);
+      summary[wIdx].taxOutflow += amount;
+      return { weekIndex: wIdx, amount, items };
     });
 
     const rows = contracts.map((ctr) => {
@@ -1774,18 +2274,11 @@ function TimelineGanttView({
           }
         });
 
-        // Podatki przypadające na ten tydzień
-        let taxAmt = 0;
-        if (calc.totalTaxes !== 0 && ctr.taxDueDate) {
-          const taxD = parseDate(ctr.taxDueDate);
-          if (taxD && taxD >= wStartObj && taxD <= wEndObj) {
-            taxAmt = calc.totalTaxes;
-          }
-        }
+        // Podatki liczone są miesięcznie dla całej firmy (osobny wiersz „Podatki”)
+        const taxAmt = 0;
 
         summary[wIdx].inflow += inflowAmt;
         summary[wIdx].subOutflow += subAmt;
-        summary[wIdx].taxOutflow += taxAmt;
 
         return {
           weekIndex: wIdx,
@@ -1811,7 +2304,7 @@ function TimelineGanttView({
       w.cumulativeBalance = running;
     });
 
-    return { rowsData: rows, weeklySummary: summary, costRow: costCells };
+    return { rowsData: rows, weeklySummary: summary, costRow: costCells, taxRow: taxCells };
   }, [contracts, costs, settings, weeks]);
 
   return (
@@ -1870,7 +2363,7 @@ function TimelineGanttView({
             <span className="px-1.5 py-0.5 rounded-sm bg-purple-100 border border-purple-300 text-[10px] font-bold">
               -Kwota
             </span>
-            Podatki (VAT+PIT)
+            Podatki: VAT do 25., PIT/CIT do 20. następnego miesiąca
           </span>
         </div>
       </div>
@@ -1987,7 +2480,7 @@ function TimelineGanttView({
               <tr className="bg-orange-50/40">
                 <td className="sticky left-0 z-10 bg-orange-50 px-4 py-2.5 border-r border-slate-200">
                   <div className="font-bold text-slate-900">Koszty firmy</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">brutto • ulga VAT + PIT/CIT</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">brutto, w dniu kosztu</div>
                 </td>
                 <td className="px-3 py-2.5 border-r border-slate-200 text-right whitespace-nowrap text-[11px] text-slate-500">
                   {costs.length} poz.
@@ -2014,6 +2507,33 @@ function TimelineGanttView({
                 ))}
               </tr>
             )}
+            <tr className="bg-purple-50/40">
+              <td className="sticky left-0 z-10 bg-purple-50 px-4 py-2.5 border-r border-slate-200">
+                <div className="font-bold text-slate-900">Podatki (miesięcznie)</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">VAT do 25. • PIT/CIT do 20.</div>
+              </td>
+              <td className="px-3 py-2.5 border-r border-slate-200 text-right whitespace-nowrap text-[11px] text-slate-500">
+                za poprzedni miesiąc
+              </td>
+              {taxRow.map((cell) => (
+                <td
+                  key={cell.weekIndex}
+                  className="p-1 border-r border-slate-200/60 align-middle text-center"
+                  title={cell.items.map((p) => `${p.kind} za ${p.month}: ${formatPLN(p.amount)} (do ${formatFullDate(p.date)})`).join('\n')}
+                >
+                  <div className="flex flex-col gap-1 items-center">
+                    {cell.items.map((p, i) => (
+                      <span
+                        key={i}
+                        className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px] leading-tight whitespace-nowrap"
+                      >
+                        {p.kind} -{formatPLN(p.amount)}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+              ))}
+            </tr>
           </tbody>
 
           {/* STOPKA PODSUMOWUJĄCA CASH FLOW TYGODNIOWY */}
@@ -2042,7 +2562,7 @@ function TimelineGanttView({
                 colSpan={2}
                 className="sticky left-0 z-10 bg-rose-50 px-4 py-2 text-rose-950 font-bold border-r border-slate-200"
               >
-                - Wydatki (Koszty + Podatki − ulgi)
+                - Wydatki (Koszty + Podatki)
               </td>
               {weeklySummary.map((w) => {
                 const totalOut = w.subOutflow + w.taxOutflow + w.costOutflow - w.taxRelief;
@@ -2314,11 +2834,7 @@ function ContractsTableView({
                           (VAT {formatPLN(calc.vatAmount)} − {formatPLN(calc.inputVat)} z kosztów)
                         </div>
                       )}
-                      {ctr.taxDueDate && (
-                        <div className="text-[10px] text-slate-400">
-                          Do: {formatShortDate(ctr.taxDueDate)}
-                        </div>
-                      )}
+                      <div className="text-[10px] text-slate-400">płatne co miesiąc</div>
                     </td>
 
                     {/* Zysk netto */}
@@ -2416,22 +2932,19 @@ function AnalyticsView({ contracts, costs = [], settings }) {
         const net = Math.max(0, Number(cost.net) || 0);
         if (bucket) bucket.subOutflow += net + Math.round(net * ((Number(cost.vatRate) || 0) / 100));
       });
-
-      if (calc.totalTaxes > 0 && ctr.taxDueDate) {
-        const bucket = ensureMonth(ctr.taxDueDate);
-        if (bucket) bucket.taxOutflow += calc.totalTaxes;
-      }
     });
 
-    // Koszty firmy: brutto w miesiącu kosztu (razem z podwykonawcami), ulga obniża podatki kolejnego miesiąca
+    // Koszty firmy: brutto w miesiącu kosztu (razem z podwykonawcami)
     costs.forEach((c) => {
       const cc = calculateCostFinancials(c, settings);
       const bucket = ensureMonth(c.date);
       if (bucket) bucket.subOutflow += cc.gross;
-      if (cc.taxRelief > 0) {
-        const rb = ensureMonth(cc.reliefDate);
-        if (rb) rb.taxOutflow -= cc.taxRelief;
-      }
+    });
+
+    // Podatki: miesięczne rozliczenie (VAT do 25., PIT/CIT do 20. następnego miesiąca)
+    buildTaxSchedule(contracts, costs, settings).payments.forEach((p) => {
+      const bucket = ensureMonth(p.date);
+      if (bucket) bucket.taxOutflow += p.amount;
     });
 
     const sorted = Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
@@ -2926,7 +3439,13 @@ function CostModal({ isOpen, onClose, onSave, onDelete, initialCost, settings })
             <div className="flex justify-between pt-1.5 border-t border-slate-200 font-bold text-slate-800">
               <span>Rzeczywisty koszt po uldze podatkowej:</span><span>{formatPLN(calc.gross - calc.taxRelief)}</span>
             </div>
-            {calc.reliefDate && <div className="text-[11px] text-slate-500">Ulga uwzględniona w podatkach płatnych {formatFullDate(calc.reliefDate)}.</div>}
+            {form.date && monthKey(form.date) && (
+              <div className="text-[11px] text-slate-500">
+                VAT odliczysz w deklaracji za {monthLabel(monthKey(form.date))} (płatność do{' '}
+                {formatFullDate(nextMonthDay(monthKey(form.date), 25))}), koszt obniży zaliczkę PIT/CIT za ten
+                miesiąc (płatność do {formatFullDate(nextMonthDay(monthKey(form.date), 20))}).
+              </div>
+            )}
           </div>
         </div>
 
@@ -3087,6 +3606,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
   const [costModalOpen, setCostModalOpen] = useState(false);
   const [editingCost, setEditingCost] = useState(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   const showToast = (msg) => {
@@ -3142,12 +3662,15 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
     let totalCostsNet = 0;
     if (costsApplied) {
       costs.forEach((c) => {
-        const cc = calculateCostFinancials(c, settings);
-        totalCostsNet += cc.net;
-        totalTaxes -= cc.taxRelief;
-        totalNetProfit += cc.citRelief - cc.net;
+        totalCostsNet += calculateCostFinancials(c, settings).net;
       });
     }
+
+    // Podatki i zysk z miesięcznego rozliczenia (VAT miesięczny z przeniesieniem nadwyżki,
+    // zaliczki PIT/CIT narastająco w roku podatkowym)
+    const taxSchedule = buildTaxSchedule(filteredContracts, costsApplied ? costs : [], settings);
+    totalTaxes = taxSchedule.totals.vatPayable + taxSchedule.totals.pitAdvance;
+    totalNetProfit = totalNet - totalSubCost - totalCostsNet - taxSchedule.totals.pitAdvance;
 
     const remainingGross = Math.max(0, totalGross - totalPaidGross);
     const avgMargin = totalNet > 0 ? (totalNetProfit / totalNet) * 100 : 0;
@@ -3163,7 +3686,8 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       totalNetProfit,
       avgMargin,
       totalCostsNet,
-      costsApplied
+      costsApplied,
+      taxSchedule
     };
   }, [filteredContracts, settings, costs, serviceFilter, statusFilter, searchQuery]);
 
@@ -3295,7 +3819,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       {/* ==================================================================== */}
       {/* GÓRNY PASEK MARKI: JACEK SZELA — BIZNES BEZ DRAMATÓW                 */}
       {/* ==================================================================== */}
-      <header className="bg-[#1E293B] text-white border-b border-slate-800 sticky top-0 z-30 shadow-sm">
+      <header className="no-print bg-[#1E293B] text-white border-b border-slate-800 sticky top-0 z-30 shadow-sm">
         <div className="max-w-[1480px] mx-auto px-4 sm:px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <BrandLogo />
 
@@ -3320,6 +3844,16 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
             >
               <Settings className="w-4 h-4 text-slate-300" />
               <span>Usługi i podatki</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPrintOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+              title="Formularze do druku: raport podatkowy, umowy, koszty, karta umowy"
+            >
+              <Printer className="w-4 h-4 text-slate-300" />
+              <span className="hidden sm:inline">Drukuj</span>
             </button>
 
             <button
@@ -3384,6 +3918,16 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       </header>
 
       {/* Powiadomienie Toast */}
+      {printOpen && (
+        <PrintView
+          onClose={() => setPrintOpen(false)}
+          contracts={filteredContracts}
+          costs={kpi.costsApplied ? costs : []}
+          settings={settings}
+          workspaceName={workspaceName}
+        />
+      )}
+
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 bg-[#1E293B] text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 text-xs font-semibold flex items-center gap-2.5 animate-fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -3394,7 +3938,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       {/* ==================================================================== */}
       {/* GŁÓWNY OBSZAR ROBOCZY                                                */}
       {/* ==================================================================== */}
-      <main className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6 flex-1">
+      <main className="no-print max-w-[1480px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6 flex-1">
         {/* PASEK KPI (5 KART FINANSOWYCH) */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* KPI 1: Przychód netto */}
@@ -3456,7 +4000,8 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
               {formatPLN(kpi.totalTaxes)}
             </div>
             <div className="text-[11px] text-slate-600 mt-1">
-              Stawki: VAT {settings.vatRate}% • PIT {settings.pitRate}%
+              VAT {formatPLN(kpi.taxSchedule.totals.vatPayable)} • PIT/CIT{' '}
+              {formatPLN(kpi.taxSchedule.totals.pitAdvance)} (miesięcznie)
             </div>
           </div>
 
