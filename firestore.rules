@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// Każda „firma” (workspace) widzi tylko swoje dane. Właściciel zaprasza po e-mailu,
+// zaproszona osoba po zalogowaniu dopisuje się sama do members.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isMember(data) { return signedIn() && request.auth.uid in data.members; }
+
+    match /workspaces/{ws} {
+      allow read: if isMember(resource.data)
+        || (signedIn() && myEmail() in resource.data.invites);
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members == [request.auth.uid]
+        && request.resource.data.invites.size() == 0;
+
+      // Członek: zmienia nazwę, ustawienia, zaproszenia; nie może zmienić właściciela.
+      // Tylko właściciel usuwa członków.
+      allow update: if isMember(resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && (request.auth.uid == resource.data.ownerUid
+            || request.resource.data.members.toSet().hasAll(resource.data.members.toSet()))
+        && resource.data.ownerUid in request.resource.data.members;
+
+      // Zaproszony: dopisuje wyłącznie siebie i zdejmuje swoje zaproszenie.
+      allow update: if signedIn()
+        && myEmail() in resource.data.invites
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'invites', 'memberEmails'])
+        && request.resource.data.members.toSet().difference(resource.data.members.toSet()) == [request.auth.uid].toSet()
+        && resource.data.members.toSet().difference(request.resource.data.members.toSet()).size() == 0;
+
+      allow delete: if false;
+
+      match /contracts/{contract} {
+        allow read, write: if isMember(get(/databases/$(database)/documents/workspaces/$(ws)).data);
+      }
+    }
+  }
+}

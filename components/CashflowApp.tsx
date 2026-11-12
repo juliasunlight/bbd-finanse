@@ -1,0 +1,2993 @@
+// @ts-nocheck
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Plus,
+  Settings,
+  Download,
+  RotateCcw,
+  Calendar,
+  TrendingUp,
+  Wallet,
+  Users,
+  Landmark,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  PauseCircle,
+  Edit3,
+  Trash2,
+  X,
+  Search,
+  Filter,
+  Sparkles,
+  ArrowUpRight,
+  ArrowDownRight,
+  BarChart3,
+  ListChecks,
+  GanttChartSquare,
+  Check,
+  Info,
+  LogOut,
+  UserPlus
+} from 'lucide-react';
+
+// ============================================================================
+// STAŁE I DANE POCZĄTKOWE (MARKA: JACEK SZELA — BIZNES BEZ DRAMATÓW)
+// ============================================================================
+
+export const DEFAULT_SETTINGS = {
+  vatRate: 23,
+  pitRate: 12,
+  deductSubcontractor: true,
+  services: [
+    {
+      id: 'srv-mentoring',
+      name: 'Mentoring 1 na 1',
+      defaultDays: 60,
+      defaultPrice: 8000,
+      defaultSubCost: 1500
+    },
+    {
+      id: 'srv-diagnoza',
+      name: 'Diagnoza',
+      defaultDays: 10,
+      defaultPrice: 2500,
+      defaultSubCost: 600
+    },
+    {
+      id: 'srv-prezes',
+      name: 'Prezes na zastępstwo',
+      defaultDays: 90,
+      defaultPrice: 12000,
+      defaultSubCost: 3500
+    },
+    {
+      id: 'srv-twierdza',
+      name: 'Męska Twierdza',
+      defaultDays: 45,
+      defaultPrice: 5500,
+      defaultSubCost: 1200
+    }
+  ]
+};
+
+export const INITIAL_CONTRACTS = [
+  {
+    id: 'ctr-1',
+    clientName: 'Alfa Logistyka Sp. z o.o.',
+    serviceName: 'Prezes na zastępstwo',
+    status: 'W trakcie',
+    startDate: '2026-11-02',
+    endDate: '2027-01-31',
+    netValue: 12000,
+    installments: [
+      { id: 'r1', label: 'Rata 1 (40%)', amount: 5904, dueDate: '2026-11-03', paid: true },
+      { id: 'r2', label: 'Rata 2 (30%)', amount: 4428, dueDate: '2026-12-15', paid: false },
+      { id: 'r3', label: 'Rata 3 (30%)', amount: 4428, dueDate: '2027-01-28', paid: false }
+    ],
+    subcontractorName: 'Marek Zieliński (Interim COO)',
+    subCost: 3500,
+    subDueDate: '2026-12-20',
+    subStatus: 'Do zapłaty',
+    taxDueDate: '2027-02-20',
+    notes: 'Wdrożenie procesów operacyjnych i restrukturyzacja działu spedycji.'
+  },
+  {
+    id: 'ctr-2',
+    clientName: 'Anna Kowalczyk (E-commerce)',
+    serviceName: 'Mentoring 1 na 1',
+    status: 'W trakcie',
+    startDate: '2026-11-09',
+    endDate: '2027-01-08',
+    netValue: 8000,
+    installments: [
+      { id: 'r1', label: 'Rata 1 (50%)', amount: 4920, dueDate: '2026-11-10', paid: true },
+      { id: 'r2', label: 'Rata 2 (50%)', amount: 4920, dueDate: '2026-12-18', paid: false }
+    ],
+    subcontractorName: 'Katarzyna Nowak (Analityk KPI)',
+    subCost: 1500,
+    subDueDate: '2026-12-10',
+    subStatus: 'Zapłacono',
+    taxDueDate: '2027-01-20',
+    notes: 'Budowa modelu marżowego i delegowanie sprzedaży.'
+  },
+  {
+    id: 'ctr-3',
+    clientName: 'Budimex Partner Sp. z o.o.',
+    serviceName: 'Diagnoza',
+    status: 'Zakończone',
+    startDate: '2026-11-02',
+    endDate: '2026-11-12',
+    netValue: 2500,
+    installments: [
+      { id: 'r1', label: 'Całość (100%)', amount: 3075, dueDate: '2026-11-04', paid: true }
+    ],
+    subcontractorName: 'Piotr Wiśniewski (Audytor)',
+    subCost: 600,
+    subDueDate: '2026-11-16',
+    subStatus: 'Zapłacono',
+    taxDueDate: '2026-12-20',
+    notes: 'Audyt wąskich gardeł przed przejściem na proces długoterminowy.'
+  },
+  {
+    id: 'ctr-4',
+    clientName: 'Grupa TechnoBud',
+    serviceName: 'Męska Twierdza',
+    status: 'W trakcie',
+    startDate: '2026-11-16',
+    endDate: '2026-12-31',
+    netValue: 5500,
+    installments: [
+      { id: 'r1', label: 'Rata 1 (50%)', amount: 3383, dueDate: '2026-11-17', paid: true },
+      { id: 'r2', label: 'Rata 2 (50%)', amount: 3382, dueDate: '2026-12-16', paid: false }
+    ],
+    subcontractorName: 'Tomasz Kaczmarek (Facylitator)',
+    subCost: 1200,
+    subDueDate: '2026-12-22',
+    subStatus: 'Do zapłaty',
+    taxDueDate: '2027-01-20',
+    notes: 'Program liderski dla 2 wspólników firmy.'
+  },
+  {
+    id: 'ctr-5',
+    clientName: 'Meble Nowak S.A.',
+    serviceName: 'Prezes na zastępstwo',
+    status: 'Zaplanowane',
+    startDate: '2026-12-01',
+    endDate: '2027-02-28',
+    netValue: 13500,
+    installments: [
+      { id: 'r1', label: 'Rata 1 (40%)', amount: 6642, dueDate: '2026-12-02', paid: false },
+      { id: 'r2', label: 'Rata 2 (30%)', amount: 4982, dueDate: '2027-01-15', paid: false },
+      { id: 'r3', label: 'Rata 3 (30%)', amount: 4981, dueDate: '2027-02-25', paid: false }
+    ],
+    subcontractorName: 'Marek Zieliński (Interim COO)',
+    subCost: 3800,
+    subDueDate: '2027-01-25',
+    subStatus: 'Do zapłaty',
+    taxDueDate: '2027-03-20',
+    notes: 'Przejęcie sterów operacyjnych na czas sukcesji zarządu.'
+  },
+  {
+    id: 'ctr-6',
+    clientName: 'Centrum Medyczne Vita',
+    serviceName: 'Diagnoza',
+    status: 'Zaplanowane',
+    startDate: '2026-11-23',
+    endDate: '2026-12-03',
+    netValue: 2500,
+    installments: [
+      { id: 'r1', label: 'Całość (100%)', amount: 3075, dueDate: '2026-11-24', paid: false }
+    ],
+    subcontractorName: '',
+    subCost: 0,
+    subDueDate: '',
+    subStatus: 'Brak',
+    taxDueDate: '2027-01-20',
+    notes: 'Diagnoza realizowana bezpośrednio przez Jacka Szelę.'
+  },
+  {
+    id: 'ctr-7',
+    clientName: 'Digital Peak Agency',
+    serviceName: 'Mentoring 1 na 1',
+    status: 'W trakcie',
+    startDate: '2026-11-04',
+    endDate: '2027-01-03',
+    netValue: 8500,
+    installments: [
+      { id: 'r1', label: 'Rata 1 (50%)', amount: 5228, dueDate: '2026-11-05', paid: true },
+      { id: 'r2', label: 'Rata 2 (50%)', amount: 5227, dueDate: '2026-12-10', paid: false }
+    ],
+    subcontractorName: 'Katarzyna Nowak (Analityk KPI)',
+    subCost: 1500,
+    subDueDate: '2026-12-14',
+    subStatus: 'Do zapłaty',
+    taxDueDate: '2027-01-20',
+    notes: 'Uporządkowanie rentowności projektów i cash flow agencji.'
+  }
+];
+
+const STATUS_OPTIONS = ['W trakcie', 'Zaplanowane', 'Zakończone', 'Wstrzymane'];
+const SUB_STATUS_OPTIONS = ['Do zapłaty', 'Zapłacono', 'Brak'];
+
+// ============================================================================
+// FUNKCJE POMOCNICZE (DATY, FORMATOWANIE WALUTY, OBLICZENIA FINANSOWE)
+// ============================================================================
+
+function formatPLN(value) {
+  const num = Number(value) || 0;
+  return new Intl.NumberFormat('pl-PL', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(Math.round(num)) + ' zł';
+}
+
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function toISODate(dateObj) {
+  if (!dateObj || isNaN(dateObj.getTime())) return '';
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(dateStr, days) {
+  const d = parseDate(dateStr);
+  if (!d) return '';
+  d.setDate(d.getDate() + Number(days || 0));
+  return toISODate(d);
+}
+
+function getNextMonth20th(dateStr) {
+  const d = parseDate(dateStr);
+  if (!d) return '';
+  const next = new Date(d.getFullYear(), d.getMonth() + 1, 20);
+  return toISODate(next);
+}
+
+function formatShortDate(dateStr) {
+  const d = parseDate(dateStr);
+  if (!d) return '—';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${day}.${month}`;
+}
+
+function formatFullDate(dateStr) {
+  const d = parseDate(dateStr);
+  if (!d) return '—';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${day}.${month}.${d.getFullYear()}`;
+}
+
+function getMondayOfWeek(dateStr) {
+  const d = parseDate(dateStr) || new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.getFullYear(), d.getMonth(), diff);
+  return toISODate(monday);
+}
+
+/**
+ * Oblicza wszystkie wskaźniki finansowe, podatkowe i statusowe dla pojedynczej umowy
+ */
+function calculateContractFinancials(contract, settings) {
+  const netValue = Number(contract.netValue) || 0;
+  const vatRate = Number(settings.vatRate) || 0;
+  const pitRate = Number(settings.pitRate) || 0;
+
+  const vatAmount = Math.round(netValue * (vatRate / 100));
+  const grossValue = netValue + vatAmount;
+
+  const effectiveSubCost =
+    contract.subStatus === 'Brak' ? 0 : Math.max(0, Number(contract.subCost) || 0);
+
+  const taxBase = settings.deductSubcontractor
+    ? Math.max(0, netValue - effectiveSubCost)
+    : netValue;
+
+  const pitAmount = Math.round(taxBase * (pitRate / 100));
+  const totalTaxes = vatAmount + pitAmount;
+
+  // Zysk netto po opłaceniu podwykonawcy i podatku dochodowego (VAT jest neutralny na poziomie netto)
+  const netProfit = netValue - effectiveSubCost - pitAmount;
+  const netMargin = netValue > 0 ? (netProfit / netValue) * 100 : 0;
+
+  const installments = Array.isArray(contract.installments) ? contract.installments : [];
+  const scheduledGross = installments.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const paidGross = installments
+    .filter((item) => item.paid)
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const remainingGross = Math.max(0, grossValue - paidGross);
+
+  const start = parseDate(contract.startDate);
+  const end = parseDate(contract.endDate);
+  const durationDays =
+    start && end ? Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1) : 0;
+
+  return {
+    netValue,
+    vatAmount,
+    grossValue,
+    effectiveSubCost,
+    pitAmount,
+    totalTaxes,
+    netProfit,
+    netMargin,
+    scheduledGross,
+    paidGross,
+    remainingGross,
+    durationDays
+  };
+}
+
+// ============================================================================
+// KOMPONENT LOGO MARKI: JACEK SZELA — BIZNES BEZ DRAMATÓW
+// ============================================================================
+
+function BrandLogo() {
+  return (
+    <div className="flex items-center gap-3.5 select-none">
+      {/* Minimalistyczna ikona samolotu z papieru i orbity */}
+      <div className="relative flex items-center justify-center w-10 h-10 rounded-lg bg-slate-800/90 border border-slate-700/80 shadow-inner">
+        <svg
+          viewBox="0 0 40 40"
+          className="w-7 h-7"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          {/* Łuk orbity */}
+          <path
+            d="M7 29C12 33 24 33 32 23"
+            stroke="#64748B"
+            strokeWidth="1.5"
+            strokeDasharray="2.5 2.5"
+            strokeLinecap="round"
+          />
+          {/* Karmazynowy punkt na orbicie */}
+          <circle cx="9" cy="29.5" r="2.5" fill="#991B1B" />
+          {/* Geometryczny samolot z papieru */}
+          <path
+            d="M33 9L8 19.5L17.5 22.5L29 12.5L20.5 23.5L27.5 26L33 9Z"
+            fill="#F8FAFC"
+            stroke="#F8FAFC"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+          <path d="M17.5 22.5V28.5L21 24.5" stroke="#CBD5E1" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+      </div>
+
+      <div className="flex flex-col">
+        <span className="text-white font-bold tracking-[0.22em] text-sm sm:text-base leading-tight">
+          JACEK SZELA
+        </span>
+        <span className="text-[#DC2626] font-extrabold tracking-[0.18em] text-[10px] sm:text-[11px] uppercase mt-0.5">
+          BIZNES BEZ DRAMATÓW
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// KOMPONENT ODZNAKI STATUSU UMOWY
+// ============================================================================
+
+function StatusBadge({ status, onChange }) {
+  const styles = {
+    'W trakcie': 'bg-amber-50 text-amber-800 border-amber-200',
+    Zaplanowane: 'bg-slate-100 text-slate-700 border-slate-300',
+    Zakończone: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    Wstrzymane: 'bg-rose-50 text-rose-800 border-rose-200'
+  };
+
+  if (onChange) {
+    return (
+      <select
+        value={status}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          e.stopPropagation();
+          onChange(e.target.value);
+        }}
+        className={`text-xs font-semibold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 transition ${
+          styles[status] || styles['Zaplanowane']
+        }`}
+      >
+        {STATUS_OPTIONS.map((opt) => (
+          <option key={opt} value={opt} className="bg-white text-slate-800">
+            {opt}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+        styles[status] || styles['Zaplanowane']
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
+// ============================================================================
+// MODAL DODAWANIA / EDYCJI UMOWY (Z AUTOMATYZACJĄ RAT I KALKULATOREM PODATKÓW)
+// ============================================================================
+
+function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, settings }) {
+  const isEditing = Boolean(initialContract);
+
+  const buildEmptyContract = () => {
+    const defaultSrv = settings.services[0] || {
+      name: 'Mentoring 1 na 1',
+      defaultDays: 60,
+      defaultPrice: 8000,
+      defaultSubCost: 1500
+    };
+    const start = '2026-11-16';
+    const end = addDays(start, defaultSrv.defaultDays);
+    const gross = Math.round(defaultSrv.defaultPrice * (1 + settings.vatRate / 100));
+    const half1 = Math.round(gross * 0.5);
+    const half2 = gross - half1;
+
+    return {
+      id: `ctr-${Date.now()}`,
+      clientName: '',
+      serviceName: defaultSrv.name,
+      status: 'Zaplanowane',
+      startDate: start,
+      endDate: end,
+      netValue: defaultSrv.defaultPrice,
+      installments: [
+        { id: 'r1', label: 'Rata 1 (50%)', amount: half1, dueDate: start, paid: false },
+        { id: 'r2', label: 'Rata 2 (50%)', amount: half2, dueDate: addDays(start, Math.floor(defaultSrv.defaultDays / 2)), paid: false }
+      ],
+      subcontractorName: '',
+      subCost: defaultSrv.defaultSubCost,
+      subDueDate: addDays(end, -5),
+      subStatus: defaultSrv.defaultSubCost > 0 ? 'Do zapłaty' : 'Brak',
+      taxDueDate: getNextMonth20th(end),
+      notes: ''
+    };
+  };
+
+  const [formData, setFormData] = useState(buildEmptyContract);
+  const [autoFeedback, setAutoFeedback] = useState('');
+  const [formError, setFormError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setFormError('');
+      setAutoFeedback('');
+      setConfirmDelete(false);
+      if (initialContract) {
+        setFormData(JSON.parse(JSON.stringify(initialContract)));
+      } else {
+        setFormData(buildEmptyContract());
+      }
+    }
+  }, [isOpen, initialContract]);
+
+  if (!isOpen) return null;
+
+  // Automatyczna aktualizacja parametrów po wyborze usługi z katalogu
+  const handleServiceChange = (newServiceName) => {
+    const srv = settings.services.find((s) => s.name === newServiceName);
+    if (!srv) {
+      setFormData((prev) => ({ ...prev, serviceName: newServiceName }));
+      return;
+    }
+
+    const updatedEnd = formData.startDate
+      ? addDays(formData.startDate, srv.defaultDays)
+      : formData.endDate;
+    const updatedTaxDate = updatedEnd ? getNextMonth20th(updatedEnd) : formData.taxDueDate;
+    const newGross = Math.round(srv.defaultPrice * (1 + settings.vatRate / 100));
+
+    // Przeliczamy proporcjonalnie istniejące raty pod nową kwotę brutto
+    const currentInstallments = formData.installments || [];
+    let nextInstallments = currentInstallments;
+    if (currentInstallments.length === 1) {
+      nextInstallments = [
+        { ...currentInstallments[0], amount: newGross, dueDate: formData.startDate }
+      ];
+    } else if (currentInstallments.length === 2) {
+      const r1 = Math.round(newGross * 0.5);
+      nextInstallments = [
+        { ...currentInstallments[0], amount: r1, dueDate: formData.startDate },
+        {
+          ...currentInstallments[1],
+          amount: newGross - r1,
+          dueDate: addDays(formData.startDate, Math.floor(srv.defaultDays / 2))
+        }
+      ];
+    } else if (currentInstallments.length === 3) {
+      const r1 = Math.round(newGross * 0.4);
+      const r2 = Math.round(newGross * 0.3);
+      nextInstallments = [
+        { ...currentInstallments[0], amount: r1, dueDate: formData.startDate },
+        {
+          ...currentInstallments[1],
+          amount: r2,
+          dueDate: addDays(formData.startDate, Math.floor(srv.defaultDays / 2))
+        },
+        {
+          ...currentInstallments[2],
+          amount: newGross - r1 - r2,
+          dueDate: addDays(updatedEnd, -3)
+        }
+      ];
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      serviceName: srv.name,
+      endDate: updatedEnd,
+      netValue: srv.defaultPrice,
+      subCost: srv.defaultSubCost,
+      subStatus: srv.defaultSubCost > 0 ? (prev.subStatus === 'Brak' ? 'Do zapłaty' : prev.subStatus) : 'Brak',
+      subDueDate: updatedEnd ? addDays(updatedEnd, -5) : prev.subDueDate,
+      taxDueDate: updatedTaxDate,
+      installments: nextInstallments
+    }));
+
+    setAutoFeedback(
+      `Automatycznie uzupełniono z katalogu: ${srv.defaultDays} dni, ${formatPLN(
+        srv.defaultPrice
+      )} netto, podwykonawca ${formatPLN(srv.defaultSubCost)}.`
+    );
+  };
+
+  // Automatyczna zmiana daty zakończenia przy zmianie daty startu
+  const handleStartDateChange = (newStart) => {
+    const srv = settings.services.find((s) => s.name === formData.serviceName);
+    const days = srv ? srv.defaultDays : 30;
+    const newEnd = newStart ? addDays(newStart, days) : formData.endDate;
+    setFormData((prev) => ({
+      ...prev,
+      startDate: newStart,
+      endDate: newEnd,
+      taxDueDate: newEnd ? getNextMonth20th(newEnd) : prev.taxDueDate
+    }));
+  };
+
+  // Generator automatycznego podziału rat brutto
+  const generateInstallments = (weights) => {
+    const net = Number(formData.netValue) || 0;
+    const gross = Math.round(net * (1 + settings.vatRate / 100));
+    const start = formData.startDate || toISODate(new Date());
+    const end = formData.endDate || addDays(start, 30);
+
+    const startObj = parseDate(start);
+    const endObj = parseDate(end);
+    const totalSpanDays =
+      startObj && endObj ? Math.max(1, Math.round((endObj - startObj) / (1000 * 60 * 60 * 24))) : 30;
+
+    let allocated = 0;
+    const generated = weights.map((w, idx) => {
+      const isLast = idx === weights.length - 1;
+      const amt = isLast ? gross - allocated : Math.round(gross * (w / 100));
+      allocated += amt;
+
+      const offsetDays =
+        idx === 0
+          ? 0
+          : isLast
+          ? Math.max(1, totalSpanDays - 3)
+          : Math.round(totalSpanDays * (idx / weights.length));
+
+      return {
+        id: `r-${Date.now()}-${idx}`,
+        label: weights.length === 1 ? 'Całość (100%)' : `Rata ${idx + 1} (${w}%)`,
+        amount: amt,
+        dueDate: addDays(start, offsetDays),
+        paid: formData.installments[idx]?.paid || false
+      };
+    });
+
+    setFormData((prev) => ({ ...prev, installments: generated }));
+    setAutoFeedback(`Rozdzielono kwotę brutto (${formatPLN(gross)}) na ${weights.length} raty.`);
+  };
+
+  const updateInstallment = (idx, field, value) => {
+    setFormData((prev) => {
+      const next = [...prev.installments];
+      next[idx] = { ...next[idx], [field]: value };
+      return { ...prev, installments: next };
+    });
+  };
+
+  const addManualInstallment = () => {
+    if (formData.installments.length >= 3) return;
+    const idx = formData.installments.length + 1;
+    setFormData((prev) => ({
+      ...prev,
+      installments: [
+        ...prev.installments,
+        {
+          id: `r-${Date.now()}`,
+          label: `Rata ${idx}`,
+          amount: 0,
+          dueDate: prev.endDate || prev.startDate,
+          paid: false
+        }
+      ]
+    }));
+  };
+
+  const removeInstallment = (idx) => {
+    if (formData.installments.length <= 1) return;
+    setFormData((prev) => ({
+      ...prev,
+      installments: prev.installments.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const liveCalc = calculateContractFinancials(formData, settings);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.clientName.trim()) {
+      setFormError('Podaj nazwę klienta lub firmy.');
+      return;
+    }
+    if (!formData.startDate || !formData.endDate) {
+      setFormError('Uzupełnij datę rozpoczęcia i zakończenia usługi.');
+      return;
+    }
+    onSave(formData);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+        {/* Nagłówek modala */}
+        <div className="bg-[#1E293B] text-white px-6 py-4 flex items-center justify-between shrink-0">
+          <div>
+            <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">
+              BIZNES BEZ DRAMATÓW • KARTA UMOWY
+            </span>
+            <h2 className="text-lg font-bold tracking-tight mt-0.5">
+              {isEditing ? `Edycja umowy: ${formData.clientName}` : 'Nowa umowa i harmonogram klienta'}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Treść formularza */}
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 flex-1">
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {autoFeedback && (
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#991B1B] shrink-0" />
+                <span>{autoFeedback}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoFeedback('')}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* SEKCJA 1: DANE KLIENTA I USŁUGI */}
+          <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-[#991B1B]" />
+              1. Zakres usługi i harmonogram realizacji
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Klient / Nazwa firmy *
+                </label>
+                <input
+                  type="text"
+                  value={formData.clientName}
+                  onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
+                  placeholder="np. Omega Transport Sp. z o.o."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Status realizacji
+                </label>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+                >
+                  {STATUS_OPTIONS.map((st) => (
+                    <option key={st} value={st}>
+                      {st}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Rodzaj usługi (auto-uzupełnianie)
+                </label>
+                <select
+                  value={formData.serviceName}
+                  onChange={(e) => handleServiceChange(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-[#991B1B]"
+                >
+                  {settings.services.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name} ({s.defaultDays} dni • {formatPLN(s.defaultPrice)} netto)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Data startu *
+                </label>
+                <input
+                  type="date"
+                  value={formData.startDate}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Data zakończenia ({liveCalc.durationDays} dni)
+                </label>
+                <input
+                  type="date"
+                  value={formData.endDate}
+                  onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* SEKCJA 2: WARTOŚĆ UMOWY I HARMONOGRAM RAT KLIENTA */}
+          <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-200/80 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-amber-600" />
+                2. Wartość umowy i raty płatności klienta (Brutto z VAT {settings.vatRate}%)
+              </h3>
+
+              {/* Szybkie przyciski generatora rat */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-medium text-slate-500 mr-1">
+                  Rozdziel raty automatycznie:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => generateInstallments([100])}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 transition"
+                >
+                  100% z góry
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateInstallments([50, 50])}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 transition"
+                >
+                  50% / 50%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateInstallments([40, 30, 30])}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 transition"
+                >
+                  40% / 30% / 30%
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Wartość umowy NETTO (PLN)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="100"
+                  value={formData.netValue}
+                  onChange={(e) =>
+                    setFormData({ ...formData, netValue: Number(e.target.value) || 0 })
+                  }
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="bg-white px-3.5 py-2 rounded-xl border border-amber-200 flex flex-col justify-center">
+                <span className="text-[11px] text-slate-500">Kwota BRUTTO (do zafakturowania)</span>
+                <span className="text-base font-bold text-slate-900">
+                  {formatPLN(liveCalc.grossValue)}
+                </span>
+              </div>
+
+              <div className="bg-white px-3.5 py-2 rounded-xl border border-amber-200 flex flex-col justify-center">
+                <span className="text-[11px] text-slate-500">Suma rozpisanych rat brutto</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-base font-bold ${
+                      Math.abs(liveCalc.scheduledGross - liveCalc.grossValue) <= 2
+                        ? 'text-emerald-700'
+                        : 'text-amber-700'
+                    }`}
+                  >
+                    {formatPLN(liveCalc.scheduledGross)}
+                  </span>
+                  {Math.abs(liveCalc.scheduledGross - liveCalc.grossValue) > 2 && (
+                    <span className="text-[11px] text-amber-700 font-medium">
+                      (różnica: {formatPLN(liveCalc.grossValue - liveCalc.scheduledGross)})
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Lista rat */}
+            <div className="space-y-2.5">
+              {formData.installments.map((inst, idx) => (
+                <div
+                  key={inst.id || idx}
+                  className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center bg-white p-2.5 rounded-xl border border-slate-200"
+                >
+                  <div className="sm:col-span-4">
+                    <input
+                      type="text"
+                      value={inst.label}
+                      onChange={(e) => updateInstallment(idx, 'label', e.target.value)}
+                      placeholder={`Rata ${idx + 1}`}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-800"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        value={inst.amount}
+                        onChange={(e) =>
+                          updateInstallment(idx, 'amount', Number(e.target.value) || 0)
+                        }
+                        className="w-full px-2.5 py-1.5 pr-8 rounded-lg border border-slate-200 text-xs font-bold text-slate-900"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-xs text-slate-400">zł</span>
+                    </div>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <input
+                      type="date"
+                      value={inst.dueDate}
+                      onChange={(e) => updateInstallment(idx, 'dueDate', e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(inst.paid)}
+                        onChange={(e) => updateInstallment(idx, 'paid', e.target.checked)}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span
+                        className={`text-xs font-semibold ${
+                          inst.paid ? 'text-emerald-700' : 'text-slate-500'
+                        }`}
+                      >
+                        {inst.paid ? 'Opłacona' : 'Oczekuje'}
+                      </span>
+                    </label>
+                    {formData.installments.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeInstallment(idx)}
+                        className="text-slate-400 hover:text-rose-600 p-1"
+                        title="Usuń ratę"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {formData.installments.length < 3 && (
+                <button
+                  type="button"
+                  onClick={addManualInstallment}
+                  className="text-xs font-semibold text-amber-800 hover:text-amber-950 inline-flex items-center gap-1 px-2 py-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Dodaj kolejną ratę (maks. 3)
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* SEKCJA 3: PODWYKONAWCY I PODATKI */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Podwykonawcy */}
+            <div className="bg-rose-50/40 p-4 rounded-xl border border-rose-200/80 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-rose-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-rose-600" />
+                3. Podwykonawca (Koszty projektu)
+              </h3>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Podwykonawca (imię / rola)
+                </label>
+                <input
+                  type="text"
+                  value={formData.subcontractorName}
+                  onChange={(e) =>
+                    setFormData({ ...formData, subcontractorName: e.target.value })
+                  }
+                  placeholder="np. Marek Zieliński (Interim COO)"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Koszt netto (PLN)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={formData.subCost}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        subCost: Number(e.target.value) || 0,
+                        subStatus:
+                          Number(e.target.value) > 0 && formData.subStatus === 'Brak'
+                            ? 'Do zapłaty'
+                            : formData.subStatus
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Status wypłaty
+                  </label>
+                  <select
+                    value={formData.subStatus}
+                    onChange={(e) => setFormData({ ...formData, subStatus: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                  >
+                    {SUB_STATUS_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Termin wypłaty podwykonawcy
+                </label>
+                <input
+                  type="date"
+                  value={formData.subDueDate}
+                  onChange={(e) => setFormData({ ...formData, subDueDate: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Podatki i podgląd rentowności na żywo */}
+            <div className="bg-purple-50/40 p-4 rounded-xl border border-purple-200/80 space-y-3 flex flex-col justify-between">
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-purple-900 flex items-center gap-2">
+                  <Landmark className="w-4 h-4 text-purple-700" />
+                  4. Podatki i podgląd wyniku netto
+                </h3>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      Termin płatności podatków (VAT + PIT/CIT)
+                    </label>
+                    {formData.endDate && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            taxDueDate: getNextMonth20th(formData.endDate)
+                          })
+                        }
+                        className="text-[11px] font-semibold text-purple-700 hover:underline"
+                      >
+                        Ustaw 20. dzień po zakończeniu
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="date"
+                    value={formData.taxDueDate}
+                    onChange={(e) => setFormData({ ...formData, taxDueDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Podsumowanie finansowe na żywo */}
+              <div className="bg-white p-3.5 rounded-xl border border-purple-200 space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-600">
+                  <span>Podatek VAT ({settings.vatRate}%):</span>
+                  <span className="font-semibold text-slate-800">
+                    {formatPLN(liveCalc.vatAmount)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>
+                    Podatek dochodowy PIT/CIT ({settings.pitRate}%
+                    {settings.deductSubcontractor ? ' po kosztach' : ' ryczałt od przychodu'}):
+                  </span>
+                  <span className="font-semibold text-slate-800">
+                    {formatPLN(liveCalc.pitAmount)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-purple-800 font-semibold pt-1 border-t border-slate-100">
+                  <span>Łączne obciążenie podatkowe:</span>
+                  <span>{formatPLN(liveCalc.totalTaxes)}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5 border-t border-slate-200">
+                  <span className="font-bold text-slate-800">Zysk netto po podatkach:</span>
+                  <span
+                    className={`text-sm font-extrabold ${
+                      liveCalc.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                    }`}
+                  >
+                    {formatPLN(liveCalc.netProfit)} ({liveCalc.netMargin.toFixed(1)}%)
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* NOTATKI */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Notatki do umowy
+            </label>
+            <textarea
+              rows={2}
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              placeholder="Dodatkowe ustalenia, kluczowe kamienie milowe lub uwagi do rozliczeń..."
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+            />
+          </div>
+
+          {/* STOPKA MODALA */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
+            {isEditing ? (
+              <div>
+                {!confirmDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    className="px-4 py-2.5 rounded-xl text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 inline-flex items-center gap-1.5 transition"
+                  >
+                    <Trash2 className="w-4 h-4" /> Usuń umowę
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-rose-700">Na pewno usunąć?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDelete(formData.id);
+                        onClose();
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                      Tak, usuń
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700"
+                    >
+                      Anuluj
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition"
+              >
+                Anuluj
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-[#1E293B] hover:bg-slate-800 shadow-sm inline-flex items-center gap-2 transition"
+              >
+                <Check className="w-4 h-4" />
+                {isEditing ? 'Zapisz zmiany' : 'Dodaj do harmonogramu'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MODAL USTAWIEŃ USŁUG I PODATKÓW
+// ============================================================================
+
+function SettingsModal({ isOpen, onClose, settings, onSaveSettings }) {
+  const [draft, setDraft] = useState(settings);
+
+  useEffect(() => {
+    if (isOpen) {
+      setDraft(JSON.parse(JSON.stringify(settings)));
+    }
+  }, [isOpen, settings]);
+
+  if (!isOpen) return null;
+
+  const updateService = (idx, field, value) => {
+    setDraft((prev) => {
+      const next = [...prev.services];
+      next[idx] = { ...next[idx], [field]: value };
+      return { ...prev, services: next };
+    });
+  };
+
+  const addService = () => {
+    setDraft((prev) => ({
+      ...prev,
+      services: [
+        ...prev.services,
+        {
+          id: `srv-${Date.now()}`,
+          name: 'Nowa usługa doradcza',
+          defaultDays: 30,
+          defaultPrice: 5000,
+          defaultSubCost: 1000
+        }
+      ]
+    }));
+  };
+
+  const removeService = (idx) => {
+    if (draft.services.length <= 1) return;
+    setDraft((prev) => ({
+      ...prev,
+      services: prev.services.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    onSaveSettings(draft);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="bg-[#1E293B] text-white px-6 py-4 flex items-center justify-between shrink-0">
+          <div>
+            <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">
+              KONFIGURACJA MODELU FINANSOWEGO
+            </span>
+            <h2 className="text-lg font-bold mt-0.5">Ustawienia usług i podatków</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-6 flex-1">
+          {/* Parametry podatkowe */}
+          <div className="bg-purple-50/50 p-4 rounded-xl border border-purple-200 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-purple-900">
+              Parametry podatkowe (przeliczają całą aplikację w czasie rzeczywistym)
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Stawka podatku VAT (%)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="50"
+                  step="1"
+                  value={draft.vatRate}
+                  onChange={(e) =>
+                    setDraft({ ...draft, vatRate: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Stawka podatku dochodowego PIT / CIT / Ryczałt (%)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="50"
+                  step="0.5"
+                  value={draft.pitRate}
+                  onChange={(e) =>
+                    setDraft({ ...draft, pitRate: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-bold"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-white border border-purple-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(draft.deductSubcontractor)}
+                onChange={(e) =>
+                  setDraft({ ...draft, deductSubcontractor: e.target.checked })
+                }
+                className="w-4 h-4 rounded text-purple-700 focus:ring-purple-600"
+              />
+              <div>
+                <span className="text-sm font-semibold text-slate-800 block">
+                  Odliczaj koszt podwykonawcy od podstawy PIT/CIT
+                </span>
+                <span className="text-xs text-slate-500">
+                  Odznacz, jeśli rozliczasz się ryczałtem od przychodów ewidencjonowanych (podatek od
+                  pełnej kwoty netto).
+                </span>
+              </div>
+            </label>
+          </div>
+
+          {/* Katalog usług */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Katalog usług i wartości domyślne
+              </h3>
+              <button
+                type="button"
+                onClick={addService}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 inline-flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Dodaj usługę
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {draft.services.map((srv, idx) => (
+                <div
+                  key={srv.id}
+                  className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center bg-slate-50 p-3 rounded-xl border border-slate-200"
+                >
+                  <div className="sm:col-span-5">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Nazwa produktu / usługi
+                    </label>
+                    <input
+                      type="text"
+                      value={srv.name}
+                      onChange={(e) => updateService(idx, 'name', e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Czas (dni)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={srv.defaultDays}
+                      onChange={(e) =>
+                        updateService(idx, 'defaultDays', Math.max(1, Number(e.target.value) || 1))
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Cena netto (zł)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={srv.defaultPrice}
+                      onChange={(e) =>
+                        updateService(idx, 'defaultPrice', Math.max(0, Number(e.target.value) || 0))
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Podwyk. (zł)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={srv.defaultSubCost}
+                      onChange={(e) =>
+                        updateService(
+                          idx,
+                          'defaultSubCost',
+                          Math.max(0, Number(e.target.value) || 0)
+                        )
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold"
+                    />
+                  </div>
+                  <div className="sm:col-span-1 flex justify-end pt-3 sm:pt-4">
+                    {draft.services.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeService(idx)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600"
+                        title="Usuń z katalogu"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100"
+            >
+              Anuluj
+            </button>
+            <button
+              type="submit"
+              className="px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-[#1E293B] hover:bg-slate-800 inline-flex items-center gap-2"
+            >
+              <Check className="w-4 h-4" /> Zastosuj ustawienia
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// WIDOK 1: HARMONOGRAM I OŚ CZASU (GANTT + CASH FLOW TYGODNIOWY)
+// ============================================================================
+
+function TimelineGanttView({
+  contracts,
+  settings,
+  timelineStart,
+  setTimelineStart,
+  weeksCount,
+  setWeeksCount,
+  onSelectContract
+}) {
+  const [hoveredCell, setHoveredCell] = useState(null);
+
+  // Generowanie tablicy tygodni zaczynając od poniedziałku wybranego tygodnia
+  const weeks = useMemo(() => {
+    const mondayStr = getMondayOfWeek(timelineStart);
+    const result = [];
+    for (let i = 0; i < weeksCount; i++) {
+      const wStart = addDays(mondayStr, i * 7);
+      const wEnd = addDays(wStart, 6);
+      result.push({
+        index: i,
+        label: `T${i + 1}`,
+        start: wStart,
+        end: wEnd,
+        rangeText: `${formatShortDate(wStart)}–${formatShortDate(wEnd)}`
+      });
+    }
+    return result;
+  }, [timelineStart, weeksCount]);
+
+  // Przeliczenie macierzy komórek i sum tygodniowych
+  const { rowsData, weeklySummary } = useMemo(() => {
+    const summary = weeks.map((w) => ({
+      ...w,
+      inflow: 0,
+      subOutflow: 0,
+      taxOutflow: 0,
+      netBalance: 0,
+      cumulativeBalance: 0
+    }));
+
+    const rows = contracts.map((ctr) => {
+      const calc = calculateContractFinancials(ctr, settings);
+      const ctrStart = parseDate(ctr.startDate);
+      const ctrEnd = parseDate(ctr.endDate);
+
+      const cells = weeks.map((w, wIdx) => {
+        const wStartObj = parseDate(w.start);
+        const wEndObj = parseDate(w.end);
+
+        // Czy usługa trwa w tym tygodniu
+        const isActive =
+          ctrStart && ctrEnd && wStartObj && wEndObj
+            ? ctrStart <= wEndObj && ctrEnd >= wStartObj
+            : false;
+
+        // Raty klienta przypadające na ten tydzień
+        const weekInstallments = (ctr.installments || []).filter((inst) => {
+          const d = parseDate(inst.dueDate);
+          return d && d >= wStartObj && d <= wEndObj;
+        });
+        const inflowAmt = weekInstallments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+
+        // Wypłata podwykonawcy przypadająca na ten tydzień
+        let subAmt = 0;
+        if (calc.effectiveSubCost > 0 && ctr.subDueDate) {
+          const subD = parseDate(ctr.subDueDate);
+          if (subD && subD >= wStartObj && subD <= wEndObj) {
+            subAmt = calc.effectiveSubCost;
+          }
+        }
+
+        // Podatki przypadające na ten tydzień
+        let taxAmt = 0;
+        if (calc.totalTaxes > 0 && ctr.taxDueDate) {
+          const taxD = parseDate(ctr.taxDueDate);
+          if (taxD && taxD >= wStartObj && taxD <= wEndObj) {
+            taxAmt = calc.totalTaxes;
+          }
+        }
+
+        summary[wIdx].inflow += inflowAmt;
+        summary[wIdx].subOutflow += subAmt;
+        summary[wIdx].taxOutflow += taxAmt;
+
+        return {
+          weekIndex: wIdx,
+          isActive,
+          inflowAmt,
+          weekInstallments,
+          subAmt,
+          taxAmt
+        };
+      });
+
+      return {
+        contract: ctr,
+        calc,
+        cells
+      };
+    });
+
+    let running = 0;
+    summary.forEach((w) => {
+      w.netBalance = w.inflow - w.subOutflow - w.taxOutflow;
+      running += w.netBalance;
+      w.cumulativeBalance = running;
+    });
+
+    return { rowsData: rows, weeklySummary: summary };
+  }, [contracts, settings, weeks]);
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+      {/* Pasek sterowania osią czasu + legenda */}
+      <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
+            <Calendar className="w-4 h-4 text-[#991B1B]" />
+            <span className="text-xs font-semibold text-slate-600">Start osi czasu:</span>
+            <input
+              type="date"
+              value={timelineStart}
+              onChange={(e) => setTimelineStart(e.target.value)}
+              className="text-xs font-bold text-slate-900 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center bg-white rounded-xl border border-slate-200 p-1">
+            {[12, 16, 20].map((num) => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => setWeeksCount(num)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                  weeksCount === num
+                    ? 'bg-[#1E293B] text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {num} tyg.
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Legenda */}
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="inline-flex items-center gap-1.5 text-slate-600">
+            <span className="w-4 h-2.5 rounded-xs bg-slate-700 inline-block" />
+            Realizacja usługi
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-amber-800 font-medium">
+            <span className="px-1.5 py-0.5 rounded-sm bg-amber-100 border border-amber-300 text-[10px] font-bold">
+              +Kwota
+            </span>
+            Rata klienta (brutto)
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-rose-800 font-medium">
+            <span className="px-1.5 py-0.5 rounded-sm bg-rose-100 border border-rose-300 text-[10px] font-bold">
+              -Kwota
+            </span>
+            Podwykonawca
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-purple-800 font-medium">
+            <span className="px-1.5 py-0.5 rounded-sm bg-purple-100 border border-purple-300 text-[10px] font-bold">
+              -Kwota
+            </span>
+            Podatki (VAT+PIT)
+          </span>
+        </div>
+      </div>
+
+      {/* Kontener przewijanej tabeli Gantta */}
+      <div className="overflow-x-auto relative">
+        <table className="w-full border-collapse text-left">
+          <thead>
+            <tr className="bg-slate-100/90 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+              <th className="sticky left-0 z-20 bg-slate-100 px-4 py-3 min-w-[230px] border-r border-slate-200">
+                Klient i usługa
+              </th>
+              <th className="px-3 py-3 min-w-[105px] border-r border-slate-200 text-right">
+                Netto / Zysk
+              </th>
+              {weeks.map((w) => (
+                <th
+                  key={w.index}
+                  className="px-1.5 py-2 min-w-[84px] text-center border-r border-slate-200/70"
+                >
+                  <div className="text-slate-900 font-extrabold">{w.label}</div>
+                  <div className="text-[10px] font-normal text-slate-500 mt-0.5">{w.rangeText}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-200/80 text-xs">
+            {rowsData.length === 0 ? (
+              <tr>
+                <td colSpan={weeks.length + 2} className="py-12 text-center text-slate-500">
+                  Brak umów spełniających wybrane kryteria filtrowania.
+                </td>
+              </tr>
+            ) : (
+              rowsData.map(({ contract, calc, cells }) => (
+                <tr
+                  key={contract.id}
+                  onClick={() => onSelectContract(contract)}
+                  className="hover:bg-slate-50/90 cursor-pointer transition group"
+                >
+                  {/* Sticky kolumna klienta */}
+                  <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 px-4 py-2.5 border-r border-slate-200">
+                    <div className="font-bold text-slate-900 truncate max-w-[210px]">
+                      {contract.clientName}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-[11px] font-semibold text-[#991B1B]">
+                        {contract.serviceName}
+                      </span>
+                      <span className="text-slate-300">•</span>
+                      <span className="text-[11px] text-slate-500">{calc.durationDays} dni</span>
+                    </div>
+                  </td>
+
+                  {/* Kolumna Netto / Zysk netto */}
+                  <td className="px-3 py-2.5 border-r border-slate-200 text-right whitespace-nowrap">
+                    <div className="font-bold text-slate-800">{formatPLN(calc.netValue)}</div>
+                    <div className="text-[11px] font-semibold text-emerald-700">
+                      Zysk: {formatPLN(calc.netProfit)}
+                    </div>
+                  </td>
+
+                  {/* Komórki tygodniowe Gantta */}
+                  {cells.map((cell) => {
+                    const hasEvents =
+                      cell.inflowAmt > 0 || cell.subAmt > 0 || cell.taxAmt > 0 || cell.isActive;
+                    return (
+                      <td
+                        key={cell.weekIndex}
+                        onMouseEnter={() =>
+                          hasEvents &&
+                          setHoveredCell({
+                            clientName: contract.clientName,
+                            serviceName: contract.serviceName,
+                            week: weeks[cell.weekIndex],
+                            cell
+                          })
+                        }
+                        onMouseLeave={() => setHoveredCell(null)}
+                        className={`p-1 border-r border-slate-200/60 align-middle text-center relative transition ${
+                          cell.isActive ? 'bg-slate-100/80' : ''
+                        }`}
+                      >
+                        {/* Pasek trwania usługi na górze komórki */}
+                        {cell.isActive && (
+                          <div className="h-1.5 w-full rounded-full bg-[#1E293B] mb-1 opacity-85" />
+                        )}
+
+                        <div className="flex flex-col gap-1 items-center">
+                          {cell.inflowAmt > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px] leading-tight whitespace-nowrap shadow-2xs">
+                              +{formatPLN(cell.inflowAmt)}
+                            </span>
+                          )}
+                          {cell.subAmt > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-900 border border-rose-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                              -{formatPLN(cell.subAmt)}
+                            </span>
+                          )}
+                          {cell.taxAmt > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                              -{formatPLN(cell.taxAmt)}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))
+            )}
+          </tbody>
+
+          {/* STOPKA PODSUMOWUJĄCA CASH FLOW TYGODNIOWY */}
+          <tfoot className="border-t-2 border-slate-300 text-xs font-semibold">
+            {/* Wiersz 1: Wpływy klientów */}
+            <tr className="bg-amber-50/60 border-b border-slate-200">
+              <td
+                colSpan={2}
+                className="sticky left-0 z-10 bg-amber-50 px-4 py-2 text-amber-950 font-bold border-r border-slate-200"
+              >
+                + Wpływy od klientów (brutto)
+              </td>
+              {weeklySummary.map((w) => (
+                <td
+                  key={w.index}
+                  className="px-1.5 py-2 text-center border-r border-slate-200/70 text-amber-900 whitespace-nowrap"
+                >
+                  {w.inflow > 0 ? `+${formatPLN(w.inflow)}` : '—'}
+                </td>
+              ))}
+            </tr>
+
+            {/* Wiersz 2: Wydatki (Podwykonawcy + Podatki) */}
+            <tr className="bg-rose-50/50 border-b border-slate-200">
+              <td
+                colSpan={2}
+                className="sticky left-0 z-10 bg-rose-50 px-4 py-2 text-rose-950 font-bold border-r border-slate-200"
+              >
+                - Wydatki (Podwykonawcy + Podatki)
+              </td>
+              {weeklySummary.map((w) => {
+                const totalOut = w.subOutflow + w.taxOutflow;
+                return (
+                  <td
+                    key={w.index}
+                    className="px-1.5 py-2 text-center border-r border-slate-200/70 text-rose-800 whitespace-nowrap"
+                  >
+                    {totalOut > 0 ? `-${formatPLN(totalOut)}` : '—'}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Wiersz 3: Saldo tygodnia */}
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <td
+                colSpan={2}
+                className="sticky left-0 z-10 bg-slate-50 px-4 py-2 text-slate-800 font-bold border-r border-slate-200"
+              >
+                = Saldo tygodnia
+              </td>
+              {weeklySummary.map((w) => (
+                <td
+                  key={w.index}
+                  className={`px-1.5 py-2 text-center border-r border-slate-200/70 font-bold whitespace-nowrap ${
+                    w.netBalance > 0
+                      ? 'text-emerald-700'
+                      : w.netBalance < 0
+                      ? 'text-rose-700'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {w.netBalance !== 0
+                    ? `${w.netBalance > 0 ? '+' : ''}${formatPLN(w.netBalance)}`
+                    : '0 zł'}
+                </td>
+              ))}
+            </tr>
+
+            {/* Wiersz 4: Skumulowany Cash Flow */}
+            <tr className="bg-[#1E293B] text-white">
+              <td
+                colSpan={2}
+                className="sticky left-0 z-10 bg-[#1E293B] px-4 py-2.5 font-bold tracking-wide border-r border-slate-700"
+              >
+                SKUMULOWANY CASH FLOW
+              </td>
+              {weeklySummary.map((w) => (
+                <td
+                  key={w.index}
+                  className={`px-1.5 py-2.5 text-center border-r border-slate-700/80 font-extrabold whitespace-nowrap ${
+                    w.cumulativeBalance >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                  }`}
+                >
+                  {formatPLN(w.cumulativeBalance)}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Pływający pasek szczegółów po najechaniu na komórkę */}
+      <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex items-center justify-between min-h-[38px]">
+        {hoveredCell ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-bold text-slate-900">
+              {hoveredCell.clientName} ({hoveredCell.serviceName})
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-200 text-slate-800 font-semibold">
+              {hoveredCell.week.label}: {hoveredCell.week.rangeText}
+            </span>
+            {hoveredCell.cell.inflowAmt > 0 && (
+              <span className="text-amber-800 font-semibold">
+                Wpływ klienta: +{formatPLN(hoveredCell.cell.inflowAmt)} (
+                {hoveredCell.cell.weekInstallments
+                  .map((i) => `${i.label} • ${formatShortDate(i.dueDate)}`)
+                  .join(', ')}
+                )
+              </span>
+            )}
+            {hoveredCell.cell.subAmt > 0 && (
+              <span className="text-rose-800 font-semibold">
+                Wypłata podwykonawcy: -{formatPLN(hoveredCell.cell.subAmt)}
+              </span>
+            )}
+            {hoveredCell.cell.taxAmt > 0 && (
+              <span className="text-purple-800 font-semibold">
+                Podatki (VAT+PIT): -{formatPLN(hoveredCell.cell.taxAmt)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-slate-400 flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5" />
+            Najedź na dowolny tydzień na osi, aby zobaczyć szczegóły płatności, lub kliknij wiersz,
+            aby edytować umowę.
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// WIDOK 2: LISTA UMÓW I SZYBKIE ROZLICZENIA (ZAKŁADKA 2)
+// ============================================================================
+
+function ContractsTableView({
+  contracts,
+  settings,
+  onEditContract,
+  onUpdateStatus,
+  onToggleInstallmentPaid,
+  onToggleSubStatus
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-100/90 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+              <th className="px-4 py-3.5">Klient i usługa</th>
+              <th className="px-3 py-3.5">Status</th>
+              <th className="px-3 py-3.5">Okres realizacji</th>
+              <th className="px-3 py-3.5 text-right">Netto / Brutto</th>
+              <th className="px-3 py-3.5">Raty klienta (kliknij, aby rozliczyć)</th>
+              <th className="px-3 py-3.5">Podwykonawca</th>
+              <th className="px-3 py-3.5 text-right">Podatki (VAT+PIT)</th>
+              <th className="px-3 py-3.5 text-right">Zysk netto</th>
+              <th className="px-4 py-3.5 text-right">Akcje</th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-200/80 text-xs">
+            {contracts.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="py-12 text-center text-slate-500">
+                  Brak umów spełniających wybrane filtry.
+                </td>
+              </tr>
+            ) : (
+              contracts.map((ctr) => {
+                const calc = calculateContractFinancials(ctr, settings);
+                return (
+                  <tr
+                    key={ctr.id}
+                    onClick={() => onEditContract(ctr)}
+                    className="hover:bg-slate-50/90 cursor-pointer transition"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-900 text-sm">{ctr.clientName}</div>
+                      <div className="text-xs font-semibold text-[#991B1B] mt-0.5">
+                        {ctr.serviceName}
+                      </div>
+                      {ctr.notes && (
+                        <div className="text-[11px] text-slate-400 truncate max-w-[230px] mt-0.5">
+                          {ctr.notes}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <StatusBadge
+                        status={ctr.status}
+                        onChange={(newSt) => onUpdateStatus(ctr.id, newSt)}
+                      />
+                    </td>
+
+                    <td className="px-3 py-3 whitespace-nowrap text-slate-700">
+                      <div className="font-semibold">
+                        {formatShortDate(ctr.startDate)} – {formatFullDate(ctr.endDate)}
+                      </div>
+                      <div className="text-[11px] text-slate-500">{calc.durationDays} dni</div>
+                    </td>
+
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <div className="font-bold text-slate-900">{formatPLN(calc.netValue)}</div>
+                      <div className="text-[11px] text-slate-500">
+                        Brutto: {formatPLN(calc.grossValue)}
+                      </div>
+                    </td>
+
+                    {/* Interaktywne raty */}
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(ctr.installments || []).map((inst) => (
+                          <button
+                            key={inst.id}
+                            type="button"
+                            onClick={() => onToggleInstallmentPaid(ctr.id, inst.id)}
+                            title="Kliknij, aby zmienić status wpłaty raty"
+                            className={`px-2 py-1 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1 transition ${
+                              inst.paid
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                            }`}
+                          >
+                            {inst.paid ? (
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            ) : (
+                              <Clock className="w-3 h-3 text-amber-600" />
+                            )}
+                            <span>{formatPLN(inst.amount)}</span>
+                            <span className="opacity-70">({formatShortDate(inst.dueDate)})</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        Wpłacono:{' '}
+                        <strong className="text-emerald-700">{formatPLN(calc.paidGross)}</strong> •
+                        Pozostało:{' '}
+                        <strong className="text-amber-800">{formatPLN(calc.remainingGross)}</strong>
+                      </div>
+                    </td>
+
+                    {/* Podwykonawca z szybkim przełącznikiem statusu */}
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      {ctr.subStatus === 'Brak' || calc.effectiveSubCost === 0 ? (
+                        <span className="text-slate-400 text-xs">Brak podwykonawcy</span>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="font-semibold text-slate-800 truncate max-w-[160px]">
+                            {ctr.subcontractorName || 'Podwykonawca'}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-rose-700">
+                              -{formatPLN(calc.effectiveSubCost)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onToggleSubStatus(ctr.id)}
+                              title="Kliknij, aby przełączyć status wypłaty"
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                                ctr.subStatus === 'Zapłacono'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                              }`}
+                            >
+                              {ctr.subStatus}
+                            </button>
+                          </div>
+                          {ctr.subDueDate && (
+                            <div className="text-[10px] text-slate-400">
+                              Termin: {formatFullDate(ctr.subDueDate)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Podatki */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <div className="font-bold text-purple-800">
+                        -{formatPLN(calc.totalTaxes)}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        VAT {formatPLN(calc.vatAmount)} + PIT {formatPLN(calc.pitAmount)}
+                      </div>
+                      {ctr.taxDueDate && (
+                        <div className="text-[10px] text-slate-400">
+                          Do: {formatShortDate(ctr.taxDueDate)}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Zysk netto */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <div className="text-sm font-extrabold text-emerald-700">
+                        {formatPLN(calc.netProfit)}
+                      </div>
+                      <div className="text-[11px] font-semibold text-slate-500">
+                        Marża {calc.netMargin.toFixed(1)}%
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditContract(ctr);
+                        }}
+                        className="p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition"
+                        title="Edytuj umowę"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// WIDOK 3: ANALIZA CASH FLOW I RENTOWNOŚCI USŁUG (ZAKŁADKA 3)
+// ============================================================================
+
+function AnalyticsView({ contracts, settings }) {
+  const [hoveredMonth, setHoveredMonth] = useState(null);
+
+  // Agregacja miesięczna przepływów (Wpływy brutto, Podwykonawcy, Podatki, Skumulowane saldo)
+  const monthlyData = useMemo(() => {
+    const map = {};
+
+    const ensureMonth = (isoDate) => {
+      if (!isoDate || isoDate.length < 7) return null;
+      const key = isoDate.slice(0, 7); // YYYY-MM
+      if (!map[key]) {
+        const [y, m] = key.split('-');
+        const monthNames = [
+          'Sty',
+          'Lut',
+          'Mar',
+          'Kwi',
+          'Maj',
+          'Cze',
+          'Lip',
+          'Sie',
+          'Wrz',
+          'Paź',
+          'Lis',
+          'Gru'
+        ];
+        map[key] = {
+          key,
+          label: `${monthNames[Number(m) - 1]} ${y}`,
+          inflow: 0,
+          subOutflow: 0,
+          taxOutflow: 0,
+          netCash: 0,
+          cumulative: 0
+        };
+      }
+      return map[key];
+    };
+
+    contracts.forEach((ctr) => {
+      const calc = calculateContractFinancials(ctr, settings);
+
+      (ctr.installments || []).forEach((inst) => {
+        const bucket = ensureMonth(inst.dueDate);
+        if (bucket) bucket.inflow += Number(inst.amount) || 0;
+      });
+
+      if (calc.effectiveSubCost > 0 && ctr.subDueDate) {
+        const bucket = ensureMonth(ctr.subDueDate);
+        if (bucket) bucket.subOutflow += calc.effectiveSubCost;
+      }
+
+      if (calc.totalTaxes > 0 && ctr.taxDueDate) {
+        const bucket = ensureMonth(ctr.taxDueDate);
+        if (bucket) bucket.taxOutflow += calc.totalTaxes;
+      }
+    });
+
+    const sorted = Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
+    let running = 0;
+    sorted.forEach((m) => {
+      m.netCash = m.inflow - m.subOutflow - m.taxOutflow;
+      running += m.netCash;
+      m.cumulative = running;
+    });
+    return sorted;
+  }, [contracts, settings]);
+
+  // Agregacja rentowności według rodzaju usługi
+  const serviceStats = useMemo(() => {
+    const map = {};
+    settings.services.forEach((s) => {
+      map[s.name] = {
+        serviceName: s.name,
+        count: 0,
+        netRevenue: 0,
+        subCost: 0,
+        taxes: 0,
+        netProfit: 0
+      };
+    });
+
+    contracts.forEach((ctr) => {
+      const calc = calculateContractFinancials(ctr, settings);
+      if (!map[ctr.serviceName]) {
+        map[ctr.serviceName] = {
+          serviceName: ctr.serviceName,
+          count: 0,
+          netRevenue: 0,
+          subCost: 0,
+          taxes: 0,
+          netProfit: 0
+        };
+      }
+      map[ctr.serviceName].count += 1;
+      map[ctr.serviceName].netRevenue += calc.netValue;
+      map[ctr.serviceName].subCost += calc.effectiveSubCost;
+      map[ctr.serviceName].taxes += calc.totalTaxes;
+      map[ctr.serviceName].netProfit += calc.netProfit;
+    });
+
+    return Object.values(map).sort((a, b) => b.netRevenue - a.netRevenue);
+  }, [contracts, settings]);
+
+  const maxMonthlyVal = useMemo(() => {
+    let max = 1000;
+    monthlyData.forEach((m) => {
+      max = Math.max(max, m.inflow, m.subOutflow + m.taxOutflow, Math.abs(m.cumulative));
+    });
+    return max * 1.15;
+  }, [monthlyData]);
+
+  const maxServiceVal = useMemo(() => {
+    let max = 1000;
+    serviceStats.forEach((s) => {
+      max = Math.max(max, s.netRevenue);
+    });
+    return max;
+  }, [serviceStats]);
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      {/* LEWY WYKRES: MIESIĘCZNE PRZEPŁYWY PIENIĘŻNE + SKUMULOWANY CASH FLOW */}
+      <div className="xl:col-span-7 bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col justify-between">
+        <div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                Miesięczny plan przepływów pieniężnych (Cash Flow)
+              </h3>
+              <p className="text-xs text-slate-500">
+                Zestawienie wpływów brutto, wypłat dla podwykonawców, podatków oraz salda
+                narastającego
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold">
+              <span className="inline-flex items-center gap-1.5 text-amber-800">
+                <span className="w-2.5 h-2.5 rounded-xs bg-amber-500" /> Wpływy brutto
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-rose-800">
+                <span className="w-2.5 h-2.5 rounded-xs bg-rose-600" /> Podwykonawcy
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-purple-800">
+                <span className="w-2.5 h-2.5 rounded-xs bg-purple-700" /> Podatki
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-800">
+                <span className="w-3 h-0.5 bg-emerald-600 inline-block" /> Skumulowane
+              </span>
+            </div>
+          </div>
+
+          {monthlyData.length === 0 ? (
+            <div className="h-64 flex items-center justify-center text-sm text-slate-400">
+              Brak danych do wyświetlenia wykresu.
+            </div>
+          ) : (
+            <div className="w-full overflow-x-auto">
+              <svg
+                viewBox={`0 0 ${Math.max(540, monthlyData.length * 105)} 270`}
+                className="w-full h-64 overflow-visible"
+              >
+                {/* Linie siatki poziomej */}
+                {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+                  const y = 210 - ratio * 180;
+                  const val = Math.round(maxMonthlyVal * ratio);
+                  return (
+                    <g key={idx}>
+                      <line
+                        x1="55"
+                        y1={y}
+                        x2={Math.max(520, monthlyData.length * 105 - 15)}
+                        y2={y}
+                        stroke="#E2E8F0"
+                        strokeDasharray={ratio === 0 ? '' : '3 3'}
+                      />
+                      <text
+                        x="48"
+                        y={y + 4}
+                        textAnchor="end"
+                        className="fill-slate-400 text-[10px] font-medium"
+                      >
+                        {val >= 1000 ? `${Math.round(val / 1000)}k` : val}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Słupki dla każdego miesiąca */}
+                {monthlyData.map((m, idx) => {
+                  const groupX = 75 + idx * 100;
+                  const inflowH = (m.inflow / maxMonthlyVal) * 180;
+                  const subH = (m.subOutflow / maxMonthlyVal) * 180;
+                  const taxH = (m.taxOutflow / maxMonthlyVal) * 180;
+
+                  return (
+                    <g
+                      key={m.key}
+                      onMouseEnter={() => setHoveredMonth(m)}
+                      onMouseLeave={() => setHoveredMonth(null)}
+                      className="cursor-pointer"
+                    >
+                      {/* Obszar podświetlenia przy najechaniu */}
+                      <rect
+                        x={groupX - 10}
+                        y={25}
+                        width="72"
+                        height="190"
+                        rx="8"
+                        fill={hoveredMonth?.key === m.key ? '#F1F5F9' : 'transparent'}
+                      />
+
+                      {/* Słupek 1: Wpływy */}
+                      <rect
+                        x={groupX}
+                        y={210 - inflowH}
+                        width="16"
+                        height={Math.max(0, inflowH)}
+                        rx="3"
+                        fill="#D97706"
+                      />
+
+                      {/* Słupek 2: Podwykonawcy */}
+                      <rect
+                        x={groupX + 20}
+                        y={210 - subH}
+                        width="16"
+                        height={Math.max(0, subH)}
+                        rx="3"
+                        fill="#DC2626"
+                      />
+
+                      {/* Słupek 3: Podatki */}
+                      <rect
+                        x={groupX + 40}
+                        y={210 - taxH}
+                        width="16"
+                        height={Math.max(0, taxH)}
+                        rx="3"
+                        fill="#7E22CE"
+                      />
+
+                      {/* Etykieta miesiąca */}
+                      <text
+                        x={groupX + 28}
+                        y="232"
+                        textAnchor="middle"
+                        className="fill-slate-700 text-[11px] font-bold"
+                      >
+                        {m.label}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Linia skumulowanego Cash Flow */}
+                {monthlyData.length > 1 && (
+                  <polyline
+                    fill="none"
+                    stroke="#15803D"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={monthlyData
+                      .map((m, idx) => {
+                        const x = 75 + idx * 100 + 28;
+                        const clamped = Math.max(0, m.cumulative);
+                        const y = 210 - (clamped / maxMonthlyVal) * 180;
+                        return `${x},${y}`;
+                      })
+                      .join(' ')}
+                  />
+                )}
+
+                {/* Punkty na linii skumulowanej */}
+                {monthlyData.map((m, idx) => {
+                  const x = 75 + idx * 100 + 28;
+                  const clamped = Math.max(0, m.cumulative);
+                  const y = 210 - (clamped / maxMonthlyVal) * 180;
+                  return (
+                    <circle
+                      key={`pt-${m.key}`}
+                      cx={x}
+                      cy={y}
+                      r="4"
+                      fill="#15803D"
+                      stroke="#FFFFFF"
+                      strokeWidth="1.5"
+                    />
+                  );
+                })}
+              </svg>
+            </div>
+          )}
+        </div>
+
+        {/* Pasek informacyjny pod wykresem */}
+        <div className="mt-3 pt-3 border-t border-slate-100 text-xs flex flex-wrap items-center justify-between gap-2 min-h-[36px]">
+          {hoveredMonth ? (
+            <>
+              <span className="font-bold text-slate-900">{hoveredMonth.label}:</span>
+              <span className="text-amber-800 font-semibold">
+                Wpływy: +{formatPLN(hoveredMonth.inflow)}
+              </span>
+              <span className="text-rose-700 font-semibold">
+                Podwyk.: -{formatPLN(hoveredMonth.subOutflow)}
+              </span>
+              <span className="text-purple-700 font-semibold">
+                Podatki: -{formatPLN(hoveredMonth.taxOutflow)}
+              </span>
+              <span className="text-emerald-700 font-extrabold">
+                Skumulowane: {formatPLN(hoveredMonth.cumulative)}
+              </span>
+            </>
+          ) : (
+            <span className="text-slate-400">
+              Najedź na wybrany miesiąc na wykresie, aby sprawdzić dokładne przepływy pieniężne.
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* PRAWY PANEL: RENTOWNOŚĆ WEDŁUG PRODUKTU */}
+      <div className="xl:col-span-5 bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col justify-between space-y-5">
+        <div>
+          <h3 className="text-base font-bold text-slate-900">
+            Rentowność według produktów marki
+          </h3>
+          <p className="text-xs text-slate-500 mb-4">
+            Porównanie przychodu netto, kosztów podwykonawców, podatków oraz czystego zysku
+          </p>
+
+          <div className="space-y-4">
+            {serviceStats.map((item) => {
+              const revPct = maxServiceVal > 0 ? (item.netRevenue / maxServiceVal) * 100 : 0;
+              const profitPct = maxServiceVal > 0 ? (Math.max(0, item.netProfit) / maxServiceVal) * 100 : 0;
+              const margin =
+                item.netRevenue > 0 ? ((item.netProfit / item.netRevenue) * 100).toFixed(1) : '0.0';
+
+              return (
+                <div
+                  key={item.serviceName}
+                  className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-slate-900 text-sm">{item.serviceName}</span>
+                      <span className="ml-2 text-xs font-semibold text-slate-500">
+                        ({item.count} {item.count === 1 ? 'umowa' : item.count < 5 ? 'umowy' : 'umów'})
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      Marża {margin}%
+                    </span>
+                  </div>
+
+                  {/* Paski porównawcze */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="w-24 text-slate-500 shrink-0">Przychód netto:</span>
+                      <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#1E293B] rounded-full"
+                          style={{ width: `${revPct}%` }}
+                        />
+                      </div>
+                      <span className="w-20 text-right font-bold text-slate-800">
+                        {formatPLN(item.netRevenue)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="w-24 text-slate-500 shrink-0">Zysk netto:</span>
+                      <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-600 rounded-full"
+                          style={{ width: `${profitPct}%` }}
+                        />
+                      </div>
+                      <span className="w-20 text-right font-extrabold text-emerald-700">
+                        {formatPLN(item.netProfit)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/70">
+                    <span>Podwykonawcy: -{formatPLN(item.subCost)}</span>
+                    <span>Podatki (VAT+PIT): -{formatPLN(item.taxes)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// GŁÓWNA APLIKACJA: JACEK SZELA — BIZNES BEZ DRAMATÓW
+// ============================================================================
+
+/**
+ * Dane przychodzą z Firestore (props), a każda zmiana jest zapisywana przez store.
+ * setContracts/setSettings zachowują dawny interfejs (updater), ale zapisują tylko różnice.
+ */
+export default function App({ contracts, settings, store, workspaceName, userEmail, onOpenTeam, onLogout }) {
+  const setContracts = (updater) => {
+    const next = typeof updater === 'function' ? updater(contracts) : updater;
+    const before = new Map(contracts.map((c) => [c.id, c]));
+    const after = new Map(next.map((c) => [c.id, c]));
+    for (const [id, c] of after) {
+      if (JSON.stringify(before.get(id)) !== JSON.stringify(c)) store.saveContract(c);
+    }
+    for (const id of before.keys()) if (!after.has(id)) store.deleteContract(id);
+  };
+  const setSettings = (next) => store.saveSettings(next);
+
+  // Nawigacja i filtry
+  const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'contracts' | 'analytics'
+  const [serviceFilter, setServiceFilter] = useState('Wszystkie');
+  const [statusFilter, setStatusFilter] = useState('Wszystkie');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [timelineStart, setTimelineStart] = useState('2026-11-02');
+  const [weeksCount, setWeeksCount] = useState(20);
+
+  // Modale i powiadomienia
+  const [contractModalOpen, setContractModalOpen] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? '' : prev));
+    }, 3500);
+  };
+
+  // Filtrowane umowy
+  const filteredContracts = useMemo(() => {
+    return contracts.filter((ctr) => {
+      if (serviceFilter !== 'Wszystkie' && ctr.serviceName !== serviceFilter) return false;
+      if (statusFilter !== 'Wszystkie' && ctr.status !== statusFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchClient = ctr.clientName.toLowerCase().includes(q);
+        const matchSub = (ctr.subcontractorName || '').toLowerCase().includes(q);
+        const matchService = ctr.serviceName.toLowerCase().includes(q);
+        if (!matchClient && !matchSub && !matchService) return false;
+      }
+      return true;
+    });
+  }, [contracts, serviceFilter, statusFilter, searchQuery]);
+
+  // Globalne KPI na podstawie przefiltrowanych umów
+  const kpi = useMemo(() => {
+    let totalNet = 0;
+    let totalGross = 0;
+    let totalPaidGross = 0;
+    let totalSubCost = 0;
+    let totalSubPaid = 0;
+    let totalTaxes = 0;
+    let totalNetProfit = 0;
+
+    filteredContracts.forEach((ctr) => {
+      const c = calculateContractFinancials(ctr, settings);
+      totalNet += c.netValue;
+      totalGross += c.grossValue;
+      totalPaidGross += c.paidGross;
+      totalSubCost += c.effectiveSubCost;
+      if (ctr.subStatus === 'Zapłacono') {
+        totalSubPaid += c.effectiveSubCost;
+      }
+      totalTaxes += c.totalTaxes;
+      totalNetProfit += c.netProfit;
+    });
+
+    const remainingGross = Math.max(0, totalGross - totalPaidGross);
+    const avgMargin = totalNet > 0 ? (totalNetProfit / totalNet) * 100 : 0;
+
+    return {
+      totalNet,
+      totalGross,
+      totalPaidGross,
+      remainingGross,
+      totalSubCost,
+      totalSubPaid,
+      totalTaxes,
+      totalNetProfit,
+      avgMargin
+    };
+  }, [filteredContracts, settings]);
+
+  // Obsługa zapisu nowej lub edytowanej umowy
+  const handleSaveContract = (savedCtr) => {
+    setContracts((prev) => {
+      const exists = prev.some((c) => c.id === savedCtr.id);
+      if (exists) {
+        return prev.map((c) => (c.id === savedCtr.id ? savedCtr : c));
+      }
+      return [savedCtr, ...prev];
+    });
+    showToast(`Zapisano umowę: ${savedCtr.clientName}`);
+  };
+
+  const handleDeleteContract = (id) => {
+    setContracts((prev) => prev.filter((c) => c.id !== id));
+    showToast('Umowa została usunięta z harmonogramu.');
+  };
+
+  const handleUpdateStatus = (id, newStatus) => {
+    setContracts((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, status: newStatus } : c))
+    );
+    showToast(`Zmieniono status realizacji na: ${newStatus}`);
+  };
+
+  const handleToggleInstallmentPaid = (contractId, installmentId) => {
+    setContracts((prev) =>
+      prev.map((c) => {
+        if (c.id !== contractId) return c;
+        return {
+          ...c,
+          installments: (c.installments || []).map((inst) =>
+            inst.id === installmentId ? { ...inst, paid: !inst.paid } : inst
+          )
+        };
+      })
+    );
+    showToast('Zaktualizowano status płatności raty.');
+  };
+
+  const handleToggleSubStatus = (contractId) => {
+    setContracts((prev) =>
+      prev.map((c) => {
+        if (c.id !== contractId) return c;
+        const nextStatus = c.subStatus === 'Zapłacono' ? 'Do zapłaty' : 'Zapłacono';
+        return { ...c, subStatus: nextStatus };
+      })
+    );
+    showToast('Zaktualizowano status wypłaty dla podwykonawcy.');
+  };
+
+  // Eksport danych do pliku CSV zgodnego z polskim Excelem (średnik + BOM UTF-8)
+  const handleExportCSV = () => {
+    const headers = [
+      'Klient',
+      'Rodzaj usługi',
+      'Status',
+      'Data startu',
+      'Data zakończenia',
+      'Czas (dni)',
+      'Wartość netto (PLN)',
+      'VAT (PLN)',
+      'Wartość brutto (PLN)',
+      'Wpłacono brutto (PLN)',
+      'Pozostało brutto (PLN)',
+      'Podwykonawca',
+      'Koszt podwykonawcy (PLN)',
+      'Status podwykonawcy',
+      'Podatek PIT/CIT (PLN)',
+      'Łączne podatki (PLN)',
+      'Zysk netto po podatkach (PLN)',
+      'Notatki'
+    ];
+
+    const rows = filteredContracts.map((ctr) => {
+      const c = calculateContractFinancials(ctr, settings);
+      return [
+        `"${ctr.clientName.replace(/"/g, '""')}"`,
+        `"${ctr.serviceName}"`,
+        `"${ctr.status}"`,
+        ctr.startDate,
+        ctr.endDate,
+        c.durationDays,
+        c.netValue,
+        c.vatAmount,
+        c.grossValue,
+        c.paidGross,
+        c.remainingGross,
+        `"${(ctr.subcontractorName || '').replace(/"/g, '""')}"`,
+        c.effectiveSubCost,
+        `"${ctr.subStatus}"`,
+        c.pitAmount,
+        c.totalTaxes,
+        c.netProfit,
+        `"${(ctr.notes || '').replace(/"/g, '""')}"`
+      ].join(';');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Biznes_Bez_Dramatow_Harmonogram_${toISODate(new Date())}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Wyeksportowano zestawienie do pliku CSV.');
+  };
+
+  const handleResetDemoData = () => {
+    setContracts(INITIAL_CONTRACTS);
+    setSettings(DEFAULT_SETTINGS);
+    setResetConfirmOpen(false);
+    showToast('Wczytano dane przykładowe (zastąpiły wszystkie umowy).');
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col">
+      {/* ==================================================================== */}
+      {/* GÓRNY PASEK MARKI: JACEK SZELA — BIZNES BEZ DRAMATÓW                 */}
+      {/* ==================================================================== */}
+      <header className="bg-[#1E293B] text-white border-b border-slate-800 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-[1480px] mx-auto px-4 sm:px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <BrandLogo />
+
+          {/* Przyciski głównych akcji */}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingContract(null);
+                setContractModalOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-[#991B1B] hover:bg-[#B91C1C] text-white text-xs sm:text-sm font-bold shadow-xs inline-flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Dodaj nową umowę / klienta</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSettingsModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Settings className="w-4 h-4 text-slate-300" />
+              <span>Usługi i podatki</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+              title="Pobierz zestawienie do Excela (CSV)"
+            >
+              <Download className="w-4 h-4 text-slate-300" />
+              <span className="hidden sm:inline">Eksportuj CSV</span>
+            </button>
+
+            {!resetConfirmOpen ? (
+              <button
+                type="button"
+                onClick={() => setResetConfirmOpen(true)}
+                className="p-2 rounded-xl bg-slate-800/70 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/70 transition cursor-pointer"
+                title="Wczytaj dane przykładowe (usuwa obecne umowy)"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1 rounded-xl border border-rose-500/50">
+                <span className="text-[11px] text-slate-200">Zastąpić umowy przykładowymi?</span>
+                <button
+                  type="button"
+                  onClick={handleResetDemoData}
+                  className="px-2 py-0.5 rounded bg-rose-600 text-white text-[11px] font-bold"
+                >
+                  Tak
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setResetConfirmOpen(false)}
+                  className="px-2 py-0.5 rounded bg-slate-700 text-slate-200 text-[11px]"
+                >
+                  Nie
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onOpenTeam}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+              title={`Firma: ${workspaceName}`}
+            >
+              <UserPlus className="w-4 h-4 text-slate-300" />
+              <span className="hidden sm:inline">Zespół</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onLogout}
+              className="p-2 rounded-xl bg-slate-800/70 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/70 transition cursor-pointer"
+              title={`Wyloguj (${userEmail})`}
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Powiadomienie Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-5 right-5 z-50 bg-[#1E293B] text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 text-xs font-semibold flex items-center gap-2.5 animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* GŁÓWNY OBSZAR ROBOCZY                                                */}
+      {/* ==================================================================== */}
+      <main className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6 flex-1">
+        {/* PASEK KPI (5 KART FINANSOWYCH) */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* KPI 1: Przychód netto */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Przychód netto (umowy)</span>
+              <TrendingUp className="w-4 h-4 text-slate-700" />
+            </div>
+            <div className="text-2xl font-extrabold text-slate-900 mt-2">
+              {formatPLN(kpi.totalNet)}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1">
+              Brutto z VAT ({settings.vatRate}%):{' '}
+              <strong className="text-slate-700">{formatPLN(kpi.totalGross)}</strong>
+            </div>
+          </div>
+
+          {/* KPI 2: Wpłacono / Pozostało */}
+          <div className="bg-white rounded-2xl p-4 border border-amber-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-amber-800 text-xs font-semibold">
+              <span>Wpłacono (brutto)</span>
+              <Wallet className="w-4 h-4 text-amber-600" />
+            </div>
+            <div className="text-2xl font-extrabold text-amber-700 mt-2">
+              {formatPLN(kpi.totalPaidGross)}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-1">
+              Pozostało do zapłaty:{' '}
+              <strong className="text-amber-800">{formatPLN(kpi.remainingGross)}</strong>
+            </div>
+          </div>
+
+          {/* KPI 3: Koszt podwykonawców */}
+          <div className="bg-white rounded-2xl p-4 border border-rose-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-rose-800 text-xs font-semibold">
+              <span>Koszt podwykonawców</span>
+              <Users className="w-4 h-4 text-rose-600" />
+            </div>
+            <div className="text-2xl font-extrabold text-rose-700 mt-2">
+              {formatPLN(kpi.totalSubCost)}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-1">
+              Wypłacono:{' '}
+              <strong className="text-slate-800">{formatPLN(kpi.totalSubPaid)}</strong> • Do
+              wypłaty:{' '}
+              <strong className="text-rose-700">
+                {formatPLN(kpi.totalSubCost - kpi.totalSubPaid)}
+              </strong>
+            </div>
+          </div>
+
+          {/* KPI 4: Podatki (VAT + PIT/CIT) */}
+          <div className="bg-white rounded-2xl p-4 border border-purple-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-purple-800 text-xs font-semibold">
+              <span>Podatki (VAT + PIT/CIT)</span>
+              <Landmark className="w-4 h-4 text-purple-700" />
+            </div>
+            <div className="text-2xl font-extrabold text-purple-800 mt-2">
+              {formatPLN(kpi.totalTaxes)}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-1">
+              Stawki: VAT {settings.vatRate}% • PIT {settings.pitRate}%
+            </div>
+          </div>
+
+          {/* KPI 5: Zysk netto po podatkach */}
+          <div className="bg-white rounded-2xl p-4 border border-emerald-200/90 shadow-2xs">
+            <div className="flex items-center justify-between text-emerald-800 text-xs font-semibold">
+              <span>Zysk netto po podatkach</span>
+              <ArrowUpRight className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="text-2xl font-extrabold text-emerald-700 mt-2">
+              {formatPLN(kpi.totalNetProfit)}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-1">
+              Rentowność netto:{' '}
+              <strong className="text-emerald-700">{kpi.avgMargin.toFixed(1)}%</strong> (
+              {filteredContracts.length} umów)
+            </div>
+          </div>
+        </section>
+
+        {/* PASEK ZAKŁADEK I FILTRÓW */}
+        <section className="bg-white rounded-2xl p-3.5 border border-slate-200/90 shadow-2xs flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          {/* Zakładki nawigacyjne */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setActiveTab('timeline')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'timeline'
+                  ? 'bg-[#1E293B] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <GanttChartSquare className="w-4 h-4" />
+              <span>Harmonogram i Oś Czasu (Gantt)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('contracts')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'contracts'
+                  ? 'bg-[#1E293B] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ListChecks className="w-4 h-4" />
+              <span>Lista umów i rozliczenia ({filteredContracts.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('analytics')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'analytics'
+                  ? 'bg-[#1E293B] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>Analiza Cash Flow i Podatki</span>
+            </button>
+          </div>
+
+          {/* Filtry po prawej */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Wyszukiwarka */}
+            <div className="relative flex-1 sm:flex-initial">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Szukaj klienta lub podwykonawcy..."
+                className="w-full sm:w-56 pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+              />
+            </div>
+
+            {/* Filtr usługi */}
+            <select
+              value={serviceFilter}
+              onChange={(e) => setServiceFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+            >
+              <option value="Wszystkie">Wszystkie usługi</option>
+              {settings.services.map((s) => (
+                <option key={s.id} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+
+            {/* Filtr statusu */}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1E293B]"
+            >
+              <option value="Wszystkie">Wszystkie statusy</option>
+              {STATUS_OPTIONS.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>
+          </div>
+        </section>
+
+        {/* ZAWARTOŚĆ AKTYWNEJ ZAKŁADKI */}
+        <section>
+          {activeTab === 'timeline' && (
+            <TimelineGanttView
+              contracts={filteredContracts}
+              settings={settings}
+              timelineStart={timelineStart}
+              setTimelineStart={setTimelineStart}
+              weeksCount={weeksCount}
+              setWeeksCount={setWeeksCount}
+              onSelectContract={(ctr) => {
+                setEditingContract(ctr);
+                setContractModalOpen(true);
+              }}
+            />
+          )}
+
+          {activeTab === 'contracts' && (
+            <ContractsTableView
+              contracts={filteredContracts}
+              settings={settings}
+              onEditContract={(ctr) => {
+                setEditingContract(ctr);
+                setContractModalOpen(true);
+              }}
+              onUpdateStatus={handleUpdateStatus}
+              onToggleInstallmentPaid={handleToggleInstallmentPaid}
+              onToggleSubStatus={handleToggleSubStatus}
+            />
+          )}
+
+          {activeTab === 'analytics' && (
+            <AnalyticsView contracts={filteredContracts} settings={settings} />
+          )}
+        </section>
+      </main>
+
+      {/* MODALE INTERAKTYWNE */}
+      <ContractModal
+        isOpen={contractModalOpen}
+        onClose={() => setContractModalOpen(false)}
+        onSave={handleSaveContract}
+        onDelete={handleDeleteContract}
+        initialContract={editingContract}
+        settings={settings}
+      />
+
+      <SettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        settings={settings}
+        onSaveSettings={(newSettings) => {
+          setSettings(newSettings);
+          showToast('Zaktualizowano katalog usług i stawki podatkowe.');
+        }}
+      />
+    </div>
+  );
+}
