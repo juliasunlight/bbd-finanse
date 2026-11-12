@@ -15,6 +15,10 @@ const ERRORS: Record<string, string> = {
   'auth/email-already-in-use': 'To konto już istnieje. Zaloguj się.',
   'auth/weak-password': 'Hasło musi mieć co najmniej 6 znaków.',
   'auth/too-many-requests': 'Zbyt wiele prób. Spróbuj za kilka minut.',
+  'auth/operation-not-allowed': 'Logowanie e-mailem jest wyłączone w Firebase.',
+  'auth/configuration-not-found': 'Logowanie nie jest skonfigurowane w Firebase.',
+  'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Nieprawidłowy klucz Firebase.',
+  'auth/network-request-failed': 'Brak połączenia z internetem.',
 };
 
 export default function Login() {
@@ -38,7 +42,7 @@ export default function Login() {
       if (mode === 'login') await signInWithEmailAndPassword(auth, email.trim(), password);
       else await createUserWithEmailAndPassword(auth, email.trim(), password);
     } catch (err: any) {
-      setMsg({ error: ERRORS[err?.code] ?? 'Coś poszło nie tak. Spróbuj ponownie.' });
+      setMsg({ error: ERRORS[err?.code] ?? `Coś poszło nie tak (${err?.code ?? 'nieznany błąd'}).` });
     } finally {
       setBusy(false);
     }
