@@ -10,6 +10,7 @@ import { db } from '@/lib/firebase';
  * Model danych (każdy klient platformy = osobna „firma”):
  *   workspaces/{id}              { name, ownerUid, members: [uid], invites: [email], settings, createdAt }
  *   workspaces/{id}/contracts/{contractId}   umowa w formacie aplikacji
+ *   workspaces/{id}/costs/{costId}           koszt firmy (faktura kosztowa)
  * Reguły w firestore.rules wpuszczają do firmy tylko jej członków.
  */
 export type Workspace = {
@@ -56,6 +57,12 @@ export function watchWorkspace(id: string, cb: (ws: Workspace | null) => void, o
   return onSnapshot(doc(db, 'workspaces', id), (s) => cb(s.exists() ? ({ id: s.id, ...s.data() } as Workspace) : null), onError);
 }
 
+export function watchCosts(id: string, cb: (list: any[]) => void, onError: (e: Error) => void) {
+  return onSnapshot(collection(db, 'workspaces', id, 'costs'), (s) => {
+    cb(s.docs.map((d) => ({ ...d.data(), id: d.id })));
+  }, onError);
+}
+
 export function watchContracts(id: string, cb: (list: any[]) => void, onError: (e: Error) => void) {
   return onSnapshot(collection(db, 'workspaces', id, 'contracts'), (s) => {
     const list = s.docs.map((d) => ({ ...d.data(), id: d.id }));
@@ -71,6 +78,8 @@ export function makeStore(wsId: string) {
   return {
     saveContract: (c: { id: string }) => setDoc(doc(db, 'workspaces', wsId, 'contracts', c.id), clean(c)),
     deleteContract: (id: string) => deleteDoc(doc(db, 'workspaces', wsId, 'contracts', id)),
+    saveCost: (c: { id: string }) => setDoc(doc(db, 'workspaces', wsId, 'costs', c.id), clean(c)),
+    deleteCost: (id: string) => deleteDoc(doc(db, 'workspaces', wsId, 'costs', id)),
     saveSettings: (settings: unknown) => updateDoc(doc(db, 'workspaces', wsId), { settings: clean(settings) }),
   };
 }

@@ -211,6 +211,7 @@ export const INITIAL_CONTRACTS = [
 
 const STATUS_OPTIONS = ['W trakcie', 'Zaplanowane', 'Zakończone', 'Wstrzymane'];
 const SUB_STATUS_OPTIONS = ['Do zapłaty', 'Zapłacono', 'Brak'];
+const VAT_COST_OPTIONS = [23, 8, 5, 0];
 
 // ============================================================================
 // FUNKCJE POMOCNICZE (DATY, FORMATOWANIE WALUTY, OBLICZENIA FINANSOWE)
@@ -290,16 +291,39 @@ function calculateContractFinancials(contract, settings) {
 
   const effectiveSubCost =
     contract.subStatus === 'Brak' ? 0 : Math.max(0, Number(contract.subCost) || 0);
+  // VAT z faktury podwykonawcy (brak pola w starszych umowach = podwykonawca bez VAT)
+  const subVatRate = Number(contract.subVatRate) || 0;
+  const subVat = Math.round(effectiveSubCost * (subVatRate / 100));
+  const subGross = effectiveSubCost + subVat;
+
+  // Pozostałe koszty projektu (faktury kosztowe)
+  const costs = Array.isArray(contract.costs) ? contract.costs : [];
+  let costsNet = 0;
+  let costsVat = 0;
+  let costsPaidNet = 0;
+  costs.forEach((item) => {
+    const net = Math.max(0, Number(item.net) || 0);
+    costsNet += net;
+    costsVat += Math.round(net * ((Number(item.vatRate) || 0) / 100));
+    if (item.paid) costsPaidNet += net;
+  });
+  const costsGross = costsNet + costsVat;
+
+  // Koszty netto razem (podwykonawca + faktury kosztowe) pomniejszają podstawę PIT/CIT
+  const totalCostsNet = effectiveSubCost + costsNet;
+  // VAT naliczony z faktur kosztowych pomniejsza VAT należny
+  const inputVat = subVat + costsVat;
+  const vatPayable = vatAmount - inputVat; // ujemny = nadwyżka VAT do odliczenia
 
   const taxBase = settings.deductSubcontractor
-    ? Math.max(0, netValue - effectiveSubCost)
+    ? Math.max(0, netValue - totalCostsNet)
     : netValue;
 
   const pitAmount = Math.round(taxBase * (pitRate / 100));
-  const totalTaxes = vatAmount + pitAmount;
+  const totalTaxes = Math.max(0, vatPayable) + pitAmount;
 
-  // Zysk netto po opłaceniu podwykonawcy i podatku dochodowego (VAT jest neutralny na poziomie netto)
-  const netProfit = netValue - effectiveSubCost - pitAmount;
+  // Zysk netto po kosztach i podatku dochodowym (VAT jest neutralny na poziomie netto)
+  const netProfit = netValue - totalCostsNet - pitAmount;
   const netMargin = netValue > 0 ? (netProfit / netValue) * 100 : 0;
 
   const installments = Array.isArray(contract.installments) ? contract.installments : [];
@@ -319,6 +343,17 @@ function calculateContractFinancials(contract, settings) {
     vatAmount,
     grossValue,
     effectiveSubCost,
+    subVatRate,
+    subVat,
+    subGross,
+    costsNet,
+    costsVat,
+    costsGross,
+    costsPaidNet,
+    totalCostsNet,
+    inputVat,
+    vatPayable,
+    vatDue: vatPayable,
     pitAmount,
     totalTaxes,
     netProfit,
@@ -328,6 +363,26 @@ function calculateContractFinancials(contract, settings) {
     remainingGross,
     durationDays
   };
+}
+
+/**
+ * Koszt firmy (faktura kosztowa): netto obniża podstawę PIT/CIT (gdy włączone odliczanie kosztów),
+ * VAT z faktury obniża VAT do zapłaty. Ulga podatkowa trafia na 20. dzień kolejnego miesiąca.
+ */
+export const COST_CATEGORIES = ['Biuro i czynsz', 'Marketing', 'Narzędzia i IT', 'Transport', 'Szkolenia', 'Usługi obce', 'Inne'];
+const COST_VAT_OPTIONS = [23, 8, 5, 0];
+
+function calculateCostFinancials(cost, settings) {
+  const net = Math.max(0, Number(cost.netAmount) || 0);
+  const vatRate = Number(cost.vatRate) || 0;
+  const vat = Math.round(net * (vatRate / 100));
+  const gross = net + vat;
+  const citRelief = settings.deductSubcontractor
+    ? Math.round(net * ((Number(settings.pitRate) || 0) / 100))
+    : 0;
+  const taxRelief = vat + citRelief;
+  const reliefDate = cost.date ? getNextMonth20th(cost.date) : '';
+  return { net, vat, gross, citRelief, taxRelief, reliefDate };
 }
 
 // ============================================================================
@@ -459,8 +514,10 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
       ],
       subcontractorName: '',
       subCost: defaultSrv.defaultSubCost,
+      subVatRate: 23,
       subDueDate: addDays(end, -5),
       subStatus: defaultSrv.defaultSubCost > 0 ? 'Do zapłaty' : 'Brak',
+      costs: [],
       taxDueDate: getNextMonth20th(end),
       notes: ''
     };
@@ -636,6 +693,41 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
     setFormData((prev) => ({
       ...prev,
       installments: prev.installments.filter((_, i) => i !== idx)
+    }));
+  };
+
+  // Faktury kosztowe projektu
+  const formCosts = Array.isArray(formData.costs) ? formData.costs : [];
+
+  const addCost = () => {
+    setFormData((prev) => ({
+      ...prev,
+      costs: [
+        ...(Array.isArray(prev.costs) ? prev.costs : []),
+        {
+          id: `k-${Date.now()}`,
+          name: '',
+          net: 0,
+          vatRate: 23,
+          dueDate: prev.endDate || prev.startDate || '',
+          paid: false
+        }
+      ]
+    }));
+  };
+
+  const updateCost = (idx, field, value) => {
+    setFormData((prev) => {
+      const next = [...(prev.costs || [])];
+      next[idx] = { ...next[idx], [field]: value };
+      return { ...prev, costs: next };
+    });
+  };
+
+  const removeCost = (idx) => {
+    setFormData((prev) => ({
+      ...prev,
+      costs: (prev.costs || []).filter((_, i) => i !== idx)
     }));
   };
 
@@ -971,7 +1063,7 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Koszt netto (PLN)
@@ -993,6 +1085,24 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
                     }
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm font-semibold"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    VAT na fakturze
+                  </label>
+                  <select
+                    value={Number(formData.subVatRate) || 0}
+                    onChange={(e) =>
+                      setFormData({ ...formData, subVatRate: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                  >
+                    {VAT_COST_OPTIONS.map((v) => (
+                      <option key={v} value={v}>
+                        {v === 0 ? 'bez VAT / zw.' : `${v}%`}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1065,9 +1175,29 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
               {/* Podsumowanie finansowe na żywo */}
               <div className="bg-white p-3.5 rounded-xl border border-purple-200 space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600">
-                  <span>Podatek VAT ({settings.vatRate}%):</span>
+                  <span>VAT należny ze sprzedaży ({settings.vatRate}%):</span>
                   <span className="font-semibold text-slate-800">
                     {formatPLN(liveCalc.vatAmount)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>VAT naliczony (podwykonawca + faktury kosztowe):</span>
+                  <span className="font-semibold text-slate-800">
+                    -{formatPLN(liveCalc.inputVat)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>
+                    {liveCalc.vatPayable >= 0 ? 'VAT do zapłaty:' : 'Nadwyżka VAT do odliczenia:'}
+                  </span>
+                  <span className="font-semibold text-slate-800">
+                    {formatPLN(Math.abs(liveCalc.vatPayable))}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Koszty netto razem (podwykonawca + faktury):</span>
+                  <span className="font-semibold text-slate-800">
+                    -{formatPLN(liveCalc.totalCostsNet)}
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-600">
@@ -1094,6 +1224,114 @@ function ContractModal({ isOpen, onClose, onSave, onDelete, initialContract, set
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* KOSZTY PROJEKTU (FAKTURY KOSZTOWE) */}
+          <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-slate-500" />
+                5. Koszty projektu (faktury kosztowe)
+              </h3>
+              <span className="text-[11px] text-slate-500">
+                Koszty netto obniżają PIT/CIT, VAT z faktur obniża VAT do zapłaty.
+              </span>
+            </div>
+
+            {formCosts.length === 0 && (
+              <p className="text-xs text-slate-400">Brak kosztów. Dodaj np. wynajem sali, materiały, dojazdy.</p>
+            )}
+
+            {formCosts.map((cost, idx) => (
+              <div
+                key={cost.id || idx}
+                className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-center bg-white p-2.5 rounded-xl border border-slate-200"
+              >
+                <div className="col-span-2 sm:col-span-4">
+                  <input
+                    type="text"
+                    value={cost.name}
+                    onChange={(e) => updateCost(idx, 'name', e.target.value)}
+                    placeholder="Za co? np. wynajem sali"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-800"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      value={cost.net}
+                      onChange={(e) => updateCost(idx, 'net', Number(e.target.value) || 0)}
+                      title="Kwota netto"
+                      className="w-full px-2.5 py-1.5 pr-14 rounded-lg border border-slate-200 text-xs font-bold text-slate-900"
+                    />
+                    <span className="absolute right-2.5 top-1.5 text-xs text-slate-400">zł netto</span>
+                  </div>
+                </div>
+                <div className="sm:col-span-2">
+                  <select
+                    value={Number(cost.vatRate) || 0}
+                    onChange={(e) => updateCost(idx, 'vatRate', Number(e.target.value) || 0)}
+                    title="Stawka VAT na fakturze"
+                    className="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white"
+                  >
+                    {VAT_COST_OPTIONS.map((v) => (
+                      <option key={v} value={v}>
+                        {v === 0 ? 'VAT: brak / zw.' : `VAT ${v}%`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <input
+                    type="date"
+                    value={cost.dueDate}
+                    onChange={(e) => updateCost(idx, 'dueDate', e.target.value)}
+                    title="Termin płatności"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800"
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-2 flex items-center justify-between sm:justify-end gap-2">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(cost.paid)}
+                      onChange={(e) => updateCost(idx, 'paid', e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className={`text-xs font-semibold ${cost.paid ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {cost.paid ? 'Zapłacono' : 'Do zapłaty'}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeCost(idx)}
+                    className="text-slate-400 hover:text-rose-600 p-1"
+                    title="Usuń koszt"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={addCost}
+                className="text-xs font-semibold text-slate-700 hover:text-slate-950 inline-flex items-center gap-1 px-2 py-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Dodaj koszt
+              </button>
+              {formCosts.length > 0 && (
+                <span className="text-[11px] text-slate-600">
+                  Razem: <strong>{formatPLN(liveCalc.costsNet)}</strong> netto + VAT{' '}
+                  <strong>{formatPLN(liveCalc.costsVat)}</strong> ={' '}
+                  <strong>{formatPLN(liveCalc.costsGross)}</strong> brutto
+                </span>
+              )}
             </div>
           </div>
 
@@ -1299,7 +1537,7 @@ function SettingsModal({ isOpen, onClose, settings, onSaveSettings }) {
               />
               <div>
                 <span className="text-sm font-semibold text-slate-800 block">
-                  Odliczaj koszt podwykonawcy od podstawy PIT/CIT
+                  Odliczaj koszty (podwykonawcy, koszty projektów i koszty firmy) od podstawy PIT/CIT
                 </span>
                 <span className="text-xs text-slate-500">
                   Odznacz, jeśli rozliczasz się ryczałtem od przychodów ewidencjonowanych (podatek od
@@ -1433,6 +1671,7 @@ function SettingsModal({ isOpen, onClose, settings, onSaveSettings }) {
 
 function TimelineGanttView({
   contracts,
+  costs = [],
   settings,
   timelineStart,
   setTimelineStart,
@@ -1461,15 +1700,39 @@ function TimelineGanttView({
   }, [timelineStart, weeksCount]);
 
   // Przeliczenie macierzy komórek i sum tygodniowych
-  const { rowsData, weeklySummary } = useMemo(() => {
+  const { rowsData, weeklySummary, costRow } = useMemo(() => {
     const summary = weeks.map((w) => ({
       ...w,
       inflow: 0,
       subOutflow: 0,
       taxOutflow: 0,
+      costOutflow: 0,
+      taxRelief: 0,
       netBalance: 0,
       cumulativeBalance: 0
     }));
+
+    // Koszty firmy: wypływ brutto w dniu kosztu, ulga podatkowa (VAT + PIT/CIT) 20. dnia kolejnego miesiąca
+    const inWeek = (iso, w) => {
+      const d = parseDate(iso);
+      return d && d >= parseDate(w.start) && d <= parseDate(w.end);
+    };
+    const costCells = weeks.map((w, wIdx) => {
+      let out = 0;
+      let relief = 0;
+      const items = [];
+      costs.forEach((c) => {
+        const cc = calculateCostFinancials(c, settings);
+        if (inWeek(c.date, w)) {
+          out += cc.gross;
+          items.push(c.name);
+        }
+        if (cc.taxRelief > 0 && inWeek(cc.reliefDate, w)) relief += cc.taxRelief;
+      });
+      summary[wIdx].costOutflow += out;
+      summary[wIdx].taxRelief += relief;
+      return { weekIndex: wIdx, out, relief, items };
+    });
 
     const rows = contracts.map((ctr) => {
       const calc = calculateContractFinancials(ctr, settings);
@@ -1494,17 +1757,26 @@ function TimelineGanttView({
         const inflowAmt = weekInstallments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
 
         // Wypłata podwykonawcy przypadająca na ten tydzień
+        // (kwoty brutto: tyle faktycznie wychodzi z konta)
         let subAmt = 0;
         if (calc.effectiveSubCost > 0 && ctr.subDueDate) {
           const subD = parseDate(ctr.subDueDate);
           if (subD && subD >= wStartObj && subD <= wEndObj) {
-            subAmt = calc.effectiveSubCost;
+            subAmt = calc.subGross;
           }
         }
+        // Faktury kosztowe przypadające na ten tydzień
+        (Array.isArray(ctr.costs) ? ctr.costs : []).forEach((cost) => {
+          const d = parseDate(cost.dueDate);
+          if (d && d >= wStartObj && d <= wEndObj) {
+            const net = Math.max(0, Number(cost.net) || 0);
+            subAmt += net + Math.round(net * ((Number(cost.vatRate) || 0) / 100));
+          }
+        });
 
         // Podatki przypadające na ten tydzień
         let taxAmt = 0;
-        if (calc.totalTaxes > 0 && ctr.taxDueDate) {
+        if (calc.totalTaxes !== 0 && ctr.taxDueDate) {
           const taxD = parseDate(ctr.taxDueDate);
           if (taxD && taxD >= wStartObj && taxD <= wEndObj) {
             taxAmt = calc.totalTaxes;
@@ -1534,13 +1806,13 @@ function TimelineGanttView({
 
     let running = 0;
     summary.forEach((w) => {
-      w.netBalance = w.inflow - w.subOutflow - w.taxOutflow;
+      w.netBalance = w.inflow - w.subOutflow - w.taxOutflow - w.costOutflow + w.taxRelief;
       running += w.netBalance;
       w.cumulativeBalance = running;
     });
 
-    return { rowsData: rows, weeklySummary: summary };
-  }, [contracts, settings, weeks]);
+    return { rowsData: rows, weeklySummary: summary, costRow: costCells };
+  }, [contracts, costs, settings, weeks]);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
@@ -1711,6 +1983,37 @@ function TimelineGanttView({
                 </tr>
               ))
             )}
+            {costs.length > 0 && (
+              <tr className="bg-orange-50/40">
+                <td className="sticky left-0 z-10 bg-orange-50 px-4 py-2.5 border-r border-slate-200">
+                  <div className="font-bold text-slate-900">Koszty firmy</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">brutto • ulga VAT + PIT/CIT</div>
+                </td>
+                <td className="px-3 py-2.5 border-r border-slate-200 text-right whitespace-nowrap text-[11px] text-slate-500">
+                  {costs.length} poz.
+                </td>
+                {costRow.map((cell) => (
+                  <td
+                    key={cell.weekIndex}
+                    className="p-1 border-r border-slate-200/60 align-middle text-center"
+                    title={cell.items.join(', ')}
+                  >
+                    <div className="flex flex-col gap-1 items-center">
+                      {cell.out > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-900 border border-orange-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                          -{formatPLN(cell.out)}
+                        </span>
+                      )}
+                      {cell.relief > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[10px] leading-tight whitespace-nowrap">
+                          ulga +{formatPLN(cell.relief)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                ))}
+              </tr>
+            )}
           </tbody>
 
           {/* STOPKA PODSUMOWUJĄCA CASH FLOW TYGODNIOWY */}
@@ -1739,16 +2042,16 @@ function TimelineGanttView({
                 colSpan={2}
                 className="sticky left-0 z-10 bg-rose-50 px-4 py-2 text-rose-950 font-bold border-r border-slate-200"
               >
-                - Wydatki (Podwykonawcy + Podatki)
+                - Wydatki (Koszty + Podatki − ulgi)
               </td>
               {weeklySummary.map((w) => {
-                const totalOut = w.subOutflow + w.taxOutflow;
+                const totalOut = w.subOutflow + w.taxOutflow + w.costOutflow - w.taxRelief;
                 return (
                   <td
                     key={w.index}
                     className="px-1.5 py-2 text-center border-r border-slate-200/70 text-rose-800 whitespace-nowrap"
                   >
-                    {totalOut > 0 ? `-${formatPLN(totalOut)}` : '—'}
+                    {totalOut !== 0 ? `${totalOut > 0 ? '-' : '+'}${formatPLN(Math.abs(totalOut))}` : '—'}
                   </td>
                 );
               })}
@@ -1959,6 +2262,12 @@ function ContractsTableView({
 
                     {/* Podwykonawca z szybkim przełącznikiem statusu */}
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      {calc.costsNet > 0 && (
+                        <div className="text-[10px] text-rose-700 mb-1">
+                          Koszty: -{formatPLN(calc.costsNet)} netto
+                          {calc.costsVat > 0 && ` (VAT ${formatPLN(calc.costsVat)})`}
+                        </div>
+                      )}
                       {ctr.subStatus === 'Brak' || calc.effectiveSubCost === 0 ? (
                         <span className="text-slate-400 text-xs">Brak podwykonawcy</span>
                       ) : (
@@ -1998,8 +2307,13 @@ function ContractsTableView({
                         -{formatPLN(calc.totalTaxes)}
                       </div>
                       <div className="text-[10px] text-slate-500">
-                        VAT {formatPLN(calc.vatAmount)} + PIT {formatPLN(calc.pitAmount)}
+                        VAT {formatPLN(Math.max(0, calc.vatPayable))} + PIT {formatPLN(calc.pitAmount)}
                       </div>
+                      {calc.inputVat > 0 && (
+                        <div className="text-[10px] text-slate-400">
+                          (VAT {formatPLN(calc.vatAmount)} − {formatPLN(calc.inputVat)} z kosztów)
+                        </div>
+                      )}
                       {ctr.taxDueDate && (
                         <div className="text-[10px] text-slate-400">
                           Do: {formatShortDate(ctr.taxDueDate)}
@@ -2045,7 +2359,7 @@ function ContractsTableView({
 // WIDOK 3: ANALIZA CASH FLOW I RENTOWNOŚCI USŁUG (ZAKŁADKA 3)
 // ============================================================================
 
-function AnalyticsView({ contracts, settings }) {
+function AnalyticsView({ contracts, costs = [], settings }) {
   const [hoveredMonth, setHoveredMonth] = useState(null);
 
   // Agregacja miesięczna przepływów (Wpływy brutto, Podwykonawcy, Podatki, Skumulowane saldo)
@@ -2094,12 +2408,29 @@ function AnalyticsView({ contracts, settings }) {
 
       if (calc.effectiveSubCost > 0 && ctr.subDueDate) {
         const bucket = ensureMonth(ctr.subDueDate);
-        if (bucket) bucket.subOutflow += calc.effectiveSubCost;
+        if (bucket) bucket.subOutflow += calc.subGross;
       }
+
+      (Array.isArray(ctr.costs) ? ctr.costs : []).forEach((cost) => {
+        const bucket = ensureMonth(cost.dueDate);
+        const net = Math.max(0, Number(cost.net) || 0);
+        if (bucket) bucket.subOutflow += net + Math.round(net * ((Number(cost.vatRate) || 0) / 100));
+      });
 
       if (calc.totalTaxes > 0 && ctr.taxDueDate) {
         const bucket = ensureMonth(ctr.taxDueDate);
         if (bucket) bucket.taxOutflow += calc.totalTaxes;
+      }
+    });
+
+    // Koszty firmy: brutto w miesiącu kosztu (razem z podwykonawcami), ulga obniża podatki kolejnego miesiąca
+    costs.forEach((c) => {
+      const cc = calculateCostFinancials(c, settings);
+      const bucket = ensureMonth(c.date);
+      if (bucket) bucket.subOutflow += cc.gross;
+      if (cc.taxRelief > 0) {
+        const rb = ensureMonth(cc.reliefDate);
+        if (rb) rb.taxOutflow -= cc.taxRelief;
       }
     });
 
@@ -2111,7 +2442,7 @@ function AnalyticsView({ contracts, settings }) {
       m.cumulative = running;
     });
     return sorted;
-  }, [contracts, settings]);
+  }, [contracts, costs, settings]);
 
   // Agregacja rentowności według rodzaju usługi
   const serviceStats = useMemo(() => {
@@ -2141,7 +2472,7 @@ function AnalyticsView({ contracts, settings }) {
       }
       map[ctr.serviceName].count += 1;
       map[ctr.serviceName].netRevenue += calc.netValue;
-      map[ctr.serviceName].subCost += calc.effectiveSubCost;
+      map[ctr.serviceName].subCost += calc.totalCostsNet;
       map[ctr.serviceName].taxes += calc.totalTaxes;
       map[ctr.serviceName].netProfit += calc.netProfit;
     });
@@ -2185,7 +2516,7 @@ function AnalyticsView({ contracts, settings }) {
                 <span className="w-2.5 h-2.5 rounded-xs bg-amber-500" /> Wpływy brutto
               </span>
               <span className="inline-flex items-center gap-1.5 text-rose-800">
-                <span className="w-2.5 h-2.5 rounded-xs bg-rose-600" /> Podwykonawcy
+                <span className="w-2.5 h-2.5 rounded-xs bg-rose-600" /> Koszty i podwykonawcy (brutto)
               </span>
               <span className="inline-flex items-center gap-1.5 text-purple-800">
                 <span className="w-2.5 h-2.5 rounded-xs bg-purple-700" /> Podatki
@@ -2236,8 +2567,8 @@ function AnalyticsView({ contracts, settings }) {
                 {monthlyData.map((m, idx) => {
                   const groupX = 75 + idx * 100;
                   const inflowH = (m.inflow / maxMonthlyVal) * 180;
-                  const subH = (m.subOutflow / maxMonthlyVal) * 180;
-                  const taxH = (m.taxOutflow / maxMonthlyVal) * 180;
+                  const subH = (Math.max(0, m.subOutflow) / maxMonthlyVal) * 180;
+                  const taxH = (Math.max(0, m.taxOutflow) / maxMonthlyVal) * 180;
 
                   return (
                     <g
@@ -2349,10 +2680,10 @@ function AnalyticsView({ contracts, settings }) {
                 Wpływy: +{formatPLN(hoveredMonth.inflow)}
               </span>
               <span className="text-rose-700 font-semibold">
-                Podwyk.: -{formatPLN(hoveredMonth.subOutflow)}
+                Koszty: -{formatPLN(hoveredMonth.subOutflow)}
               </span>
               <span className="text-purple-700 font-semibold">
-                Podatki: -{formatPLN(hoveredMonth.taxOutflow)}
+                Podatki: {hoveredMonth.taxOutflow >= 0 ? '-' : '+'}{formatPLN(Math.abs(hoveredMonth.taxOutflow))}
               </span>
               <span className="text-emerald-700 font-extrabold">
                 Skumulowane: {formatPLN(hoveredMonth.cumulative)}
@@ -2430,7 +2761,7 @@ function AnalyticsView({ contracts, settings }) {
                   </div>
 
                   <div className="flex justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/70">
-                    <span>Podwykonawcy: -{formatPLN(item.subCost)}</span>
+                    <span>Koszty: -{formatPLN(item.subCost)}</span>
                     <span>Podatki (VAT+PIT): -{formatPLN(item.taxes)}</span>
                   </div>
                 </div>
@@ -2444,6 +2775,227 @@ function AnalyticsView({ contracts, settings }) {
 }
 
 // ============================================================================
+// KOSZTY FIRMY: KARTA KOSZTU I LISTA (ZAKŁADKA 4)
+// ============================================================================
+
+function CostModal({ isOpen, onClose, onSave, onDelete, initialCost, settings }) {
+  const empty = () => ({
+    id: `cost-${Date.now()}`,
+    name: '',
+    category: COST_CATEGORIES[0],
+    date: toISODate(new Date()),
+    netAmount: '',
+    vatRate: Number(settings.vatRate) || 23,
+    paid: false,
+    notes: ''
+  });
+  const [form, setForm] = useState(empty);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setForm(initialCost ? { ...initialCost } : empty());
+      setConfirmDelete(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialCost]);
+
+  if (!isOpen) return null;
+  const calc = calculateCostFinancials(form, settings);
+  const field = 'w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm';
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.date) return;
+    onSave({ ...form, name: form.name.trim(), netAmount: Number(form.netAmount) || 0, vatRate: Number(form.vatRate) || 0 });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+      <form
+        onSubmit={submit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-fade-in"
+      >
+        <div className="bg-[#1E293B] text-white px-6 py-4 flex items-start justify-between">
+          <div>
+            <div className="text-[11px] font-bold tracking-[0.18em] text-[#F87171] uppercase">Koszty firmy</div>
+            <h2 className="text-lg font-bold">{initialCost ? 'Edycja kosztu' : 'Nowy koszt (faktura kosztowa)'}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-700 cursor-pointer" aria-label="Zamknij">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Nazwa / dostawca *</label>
+            <input className={field} required placeholder="np. Czynsz biura, reklama Meta, księgowość" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Kategoria</label>
+              <select className={field} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                {COST_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Data płatności *</label>
+              <input type="date" required className={field} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Kwota netto (PLN)</label>
+              <input type="number" min="0" step="0.01" className={`${field} font-semibold`} value={form.netAmount} onChange={(e) => setForm({ ...form, netAmount: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">VAT na fakturze</label>
+              <select className={field} value={String(form.vatRate)} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })}>
+                {COST_VAT_OPTIONS.map((r) => <option key={r} value={r}>{r === 0 ? 'Bez VAT / zw.' : `${r}%`}</option>)}
+              </select>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={!!form.paid} onChange={(e) => setForm({ ...form, paid: e.target.checked })} />
+            Zapłacono
+          </label>
+          <textarea className={field} rows={2} placeholder="Notatki (opcjonalnie)" value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+
+          <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 space-y-1.5 text-xs">
+            <div className="flex justify-between text-slate-600"><span>Do zapłaty brutto:</span><b className="text-slate-900">{formatPLN(calc.gross)}</b></div>
+            <div className="flex justify-between text-slate-600"><span>VAT do odliczenia (obniża VAT do zapłaty):</span><b className="text-emerald-700">-{formatPLN(calc.vat)}</b></div>
+            <div className="flex justify-between text-slate-600">
+              <span>Obniżenie PIT/CIT ({settings.pitRate}% od netto){settings.deductSubcontractor ? '' : ' — wyłączone (ryczałt)'}:</span>
+              <b className="text-emerald-700">-{formatPLN(calc.citRelief)}</b>
+            </div>
+            <div className="flex justify-between pt-1.5 border-t border-slate-200 font-bold text-slate-800">
+              <span>Rzeczywisty koszt po uldze podatkowej:</span><span>{formatPLN(calc.gross - calc.taxRelief)}</span>
+            </div>
+            {calc.reliefDate && <div className="text-[11px] text-slate-500">Ulga uwzględniona w podatkach płatnych {formatFullDate(calc.reliefDate)}.</div>}
+          </div>
+        </div>
+
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+          {initialCost ? (
+            confirmDelete ? (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-rose-700 font-semibold">Usunąć koszt?</span>
+                <button type="button" className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold cursor-pointer" onClick={() => { onDelete(form.id); onClose(); }}>Tak, usuń</button>
+                <button type="button" className="px-3 py-1.5 rounded-lg bg-slate-200 cursor-pointer" onClick={() => setConfirmDelete(false)}>Nie</button>
+              </div>
+            ) : (
+              <button type="button" className="text-xs font-semibold text-rose-700 inline-flex items-center gap-1 cursor-pointer" onClick={() => setConfirmDelete(true)}>
+                <Trash2 className="w-4 h-4" /> Usuń koszt
+              </button>
+            )
+          ) : <span />}
+          <button className="px-5 py-2 rounded-xl bg-[#991B1B] hover:bg-[#B91C1C] text-white text-sm font-bold cursor-pointer">
+            {initialCost ? 'Zapisz zmiany' : 'Dodaj koszt'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
+  const sorted = [...costs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const totals = sorted.reduce(
+    (t, c) => {
+      const cc = calculateCostFinancials(c, settings);
+      t.net += cc.net; t.vat += cc.vat; t.gross += cc.gross; t.cit += cc.citRelief;
+      return t;
+    },
+    { net: 0, vat: 0, gross: 0, cit: 0 }
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+      <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base font-bold text-slate-900">Koszty firmy (faktury kosztowe)</h3>
+          <p className="text-xs text-slate-500">
+            Koszty netto obniżają podstawę PIT/CIT, a VAT z faktur kosztowych obniża VAT do zapłaty.
+          </p>
+        </div>
+        <button type="button" onClick={onAdd} className="px-4 py-2 rounded-xl bg-[#991B1B] hover:bg-[#B91C1C] text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer">
+          <Plus className="w-4 h-4" /> Dodaj koszt
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="bg-slate-100/90 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+              <th className="px-4 py-3">Data</th>
+              <th className="px-3 py-3">Nazwa i kategoria</th>
+              <th className="px-3 py-3 text-right">Netto</th>
+              <th className="px-3 py-3 text-right">VAT</th>
+              <th className="px-3 py-3 text-right">Brutto</th>
+              <th className="px-3 py-3 text-right">Ulga VAT + PIT/CIT</th>
+              <th className="px-3 py-3 text-center">Status</th>
+              <th className="px-3 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200/80">
+            {sorted.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-12 text-center text-slate-500">
+                  Brak kosztów. Dodaj pierwszą fakturę kosztową przyciskiem „Dodaj koszt”.
+                </td>
+              </tr>
+            ) : (
+              sorted.map((c) => {
+                const cc = calculateCostFinancials(c, settings);
+                return (
+                  <tr key={c.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => onEdit(c)}>
+                    <td className="px-4 py-3 whitespace-nowrap font-semibold text-slate-700">{formatFullDate(c.date)}</td>
+                    <td className="px-3 py-3">
+                      <div className="font-bold text-slate-900">{c.name}</div>
+                      <div className="text-[11px] text-slate-500">{c.category}</div>
+                    </td>
+                    <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{formatPLN(cc.net)}</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap text-slate-600">
+                      {formatPLN(cc.vat)} <span className="text-[10px]">({Number(c.vatRate) || 0}%)</span>
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-orange-800 whitespace-nowrap">-{formatPLN(cc.gross)}</td>
+                    <td className="px-3 py-3 text-right font-semibold text-emerald-700 whitespace-nowrap">+{formatPLN(cc.taxRelief)}</td>
+                    <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onTogglePaid(c)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-pointer ${
+                          c.paid ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                        }`}
+                      >
+                        {c.paid ? 'Zapłacono' : 'Do zapłaty'}
+                      </button>
+                    </td>
+                    <td className="px-3 py-3 text-right"><Edit3 className="w-4 h-4 text-slate-400 inline" /></td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+          {sorted.length > 0 && (
+            <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-bold text-xs">
+              <tr>
+                <td className="px-4 py-3" colSpan={2}>Razem ({sorted.length})</td>
+                <td className="px-3 py-3 text-right">{formatPLN(totals.net)}</td>
+                <td className="px-3 py-3 text-right">{formatPLN(totals.vat)}</td>
+                <td className="px-3 py-3 text-right text-orange-800">-{formatPLN(totals.gross)}</td>
+                <td className="px-3 py-3 text-right text-emerald-700">+{formatPLN(totals.vat + totals.cit)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // GŁÓWNA APLIKACJA: JACEK SZELA — BIZNES BEZ DRAMATÓW
 // ============================================================================
 
@@ -2451,7 +3003,7 @@ function AnalyticsView({ contracts, settings }) {
  * Dane przychodzą z Firestore (props), a każda zmiana jest zapisywana przez store.
  * setContracts/setSettings zachowują dawny interfejs (updater), ale zapisują tylko różnice.
  */
-export default function App({ contracts, settings, store, workspaceName, userEmail, onOpenTeam, onLogout }) {
+export default function App({ contracts, costs, settings, store, workspaceName, userEmail, onOpenTeam, onLogout }) {
   const setContracts = (updater) => {
     const next = typeof updater === 'function' ? updater(contracts) : updater;
     const before = new Map(contracts.map((c) => [c.id, c]));
@@ -2475,6 +3027,8 @@ export default function App({ contracts, settings, store, workspaceName, userEma
   const [contractModalOpen, setContractModalOpen] = useState(false);
   const [editingContract, setEditingContract] = useState(null);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [costModalOpen, setCostModalOpen] = useState(false);
+  const [editingCost, setEditingCost] = useState(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
@@ -2516,13 +3070,27 @@ export default function App({ contracts, settings, store, workspaceName, userEma
       totalNet += c.netValue;
       totalGross += c.grossValue;
       totalPaidGross += c.paidGross;
-      totalSubCost += c.effectiveSubCost;
+      totalSubCost += c.totalCostsNet;
+      totalSubPaid += c.costsPaidNet;
       if (ctr.subStatus === 'Zapłacono') {
         totalSubPaid += c.effectiveSubCost;
       }
       totalTaxes += c.totalTaxes;
       totalNetProfit += c.netProfit;
     });
+
+    // Koszty firmy liczą się tylko w widoku całej firmy (bez filtrów umów)
+    const costsApplied =
+      serviceFilter === 'Wszystkie' && statusFilter === 'Wszystkie' && !searchQuery.trim();
+    let totalCostsNet = 0;
+    if (costsApplied) {
+      costs.forEach((c) => {
+        const cc = calculateCostFinancials(c, settings);
+        totalCostsNet += cc.net;
+        totalTaxes -= cc.taxRelief;
+        totalNetProfit += cc.citRelief - cc.net;
+      });
+    }
 
     const remainingGross = Math.max(0, totalGross - totalPaidGross);
     const avgMargin = totalNet > 0 ? (totalNetProfit / totalNet) * 100 : 0;
@@ -2536,9 +3104,11 @@ export default function App({ contracts, settings, store, workspaceName, userEma
       totalSubPaid,
       totalTaxes,
       totalNetProfit,
-      avgMargin
+      avgMargin,
+      totalCostsNet,
+      costsApplied
     };
-  }, [filteredContracts, settings]);
+  }, [filteredContracts, settings, costs, serviceFilter, statusFilter, searchQuery]);
 
   // Obsługa zapisu nowej lub edytowanej umowy
   const handleSaveContract = (savedCtr) => {
@@ -2607,6 +3177,9 @@ export default function App({ contracts, settings, store, workspaceName, userEma
       'Podwykonawca',
       'Koszt podwykonawcy (PLN)',
       'Status podwykonawcy',
+      'Inne koszty netto (PLN)',
+      'VAT naliczony z kosztów (PLN)',
+      'VAT do zapłaty (PLN)',
       'Podatek PIT/CIT (PLN)',
       'Łączne podatki (PLN)',
       'Zysk netto po podatkach (PLN)',
@@ -2630,6 +3203,9 @@ export default function App({ contracts, settings, store, workspaceName, userEma
         `"${(ctr.subcontractorName || '').replace(/"/g, '""')}"`,
         c.effectiveSubCost,
         `"${ctr.subStatus}"`,
+        c.costsNet,
+        c.inputVat,
+        c.vatPayable,
         c.pitAmount,
         c.totalTaxes,
         c.netProfit,
@@ -2797,18 +3373,18 @@ export default function App({ contracts, settings, store, workspaceName, userEma
           {/* KPI 3: Koszt podwykonawców */}
           <div className="bg-white rounded-2xl p-4 border border-rose-200/90 shadow-2xs">
             <div className="flex items-center justify-between text-rose-800 text-xs font-semibold">
-              <span>Koszt podwykonawców</span>
+              <span>Koszty netto (projekty i firma)</span>
               <Users className="w-4 h-4 text-rose-600" />
             </div>
             <div className="text-2xl font-extrabold text-rose-700 mt-2">
-              {formatPLN(kpi.totalSubCost)}
+              {formatPLN(kpi.totalSubCost + kpi.totalCostsNet)}
             </div>
             <div className="text-[11px] text-slate-600 mt-1">
-              Wypłacono:{' '}
-              <strong className="text-slate-800">{formatPLN(kpi.totalSubPaid)}</strong> • Do
-              wypłaty:{' '}
+              Umowy (podwykonawcy i koszty projektów):{' '}
+              <strong className="text-slate-800">{formatPLN(kpi.totalSubCost)}</strong> • Koszty
+              firmy:{' '}
               <strong className="text-rose-700">
-                {formatPLN(kpi.totalSubCost - kpi.totalSubPaid)}
+                {kpi.costsApplied ? formatPLN(kpi.totalCostsNet) : 'pominięte przy filtrze'}
               </strong>
             </div>
           </div>
@@ -2886,6 +3462,19 @@ export default function App({ contracts, settings, store, workspaceName, userEma
               <BarChart3 className="w-4 h-4" />
               <span>Analiza Cash Flow i Podatki</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('costs')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'costs'
+                  ? 'bg-[#1E293B] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Koszty firmy ({costs.length})</span>
+            </button>
           </div>
 
           {/* Filtry po prawej */}
@@ -2937,6 +3526,7 @@ export default function App({ contracts, settings, store, workspaceName, userEma
           {activeTab === 'timeline' && (
             <TimelineGanttView
               contracts={filteredContracts}
+              costs={kpi.costsApplied ? costs : []}
               settings={settings}
               timelineStart={timelineStart}
               setTimelineStart={setTimelineStart}
@@ -2964,7 +3554,26 @@ export default function App({ contracts, settings, store, workspaceName, userEma
           )}
 
           {activeTab === 'analytics' && (
-            <AnalyticsView contracts={filteredContracts} settings={settings} />
+            <AnalyticsView contracts={filteredContracts} costs={kpi.costsApplied ? costs : []} settings={settings} />
+          )}
+
+          {activeTab === 'costs' && (
+            <CostsView
+              costs={costs}
+              settings={settings}
+              onAdd={() => {
+                setEditingCost(null);
+                setCostModalOpen(true);
+              }}
+              onEdit={(c) => {
+                setEditingCost(c);
+                setCostModalOpen(true);
+              }}
+              onTogglePaid={(c) => {
+                store.saveCost({ ...c, paid: !c.paid });
+                showToast(c.paid ? 'Koszt oznaczony jako do zapłaty.' : 'Koszt oznaczony jako zapłacony.');
+              }}
+            />
           )}
         </section>
       </main>
@@ -2977,6 +3586,21 @@ export default function App({ contracts, settings, store, workspaceName, userEma
         onDelete={handleDeleteContract}
         initialContract={editingContract}
         settings={settings}
+      />
+
+      <CostModal
+        isOpen={costModalOpen}
+        onClose={() => setCostModalOpen(false)}
+        initialCost={editingCost}
+        settings={settings}
+        onSave={(c) => {
+          store.saveCost(c);
+          showToast(`Zapisano koszt: ${c.name}`);
+        }}
+        onDelete={(id) => {
+          store.deleteCost(id);
+          showToast('Koszt został usunięty.');
+        }}
       />
 
       <SettingsModal

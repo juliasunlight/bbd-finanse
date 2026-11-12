@@ -37,6 +37,10 @@ service cloud.firestore {
       match /contracts/{contract} {
         allow read, write: if isMember(get(/databases/$(database)/documents/workspaces/$(ws)).data);
       }
+
+      match /costs/{cost} {
+        allow read, write: if isMember(get(/databases/$(database)/documents/workspaces/$(ws)).data);
+      }
     }
   }
 }

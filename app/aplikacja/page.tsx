@@ -6,7 +6,7 @@ import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import {
-  createWorkspace, findOrJoinWorkspace, makeStore, watchContracts, watchWorkspace, type Workspace,
+  createWorkspace, findOrJoinWorkspace, makeStore, watchContracts, watchCosts, watchWorkspace, type Workspace,
 } from '@/lib/workspace';
 import CashflowApp, { DEFAULT_SETTINGS } from '@/components/CashflowApp';
 import { TeamModal } from '@/components/TeamModal';
@@ -22,6 +22,7 @@ export default function Aplikacja() {
   const [wsId, setWsId] = useState<string | null | undefined>(undefined);
   const [ws, setWs] = useState<Workspace | null>(null);
   const [contracts, setContracts] = useState<any[] | null>(null);
+  const [costs, setCosts] = useState<any[] | null>(null);
   const [error, setError] = useState('');
   const [teamOpen, setTeamOpen] = useState(false);
 
@@ -39,7 +40,8 @@ export default function Aplikacja() {
     const onErr = (e: Error) => setError(e.message);
     const a = watchWorkspace(wsId, setWs, onErr);
     const b = watchContracts(wsId, setContracts, onErr);
-    return () => { a(); b(); };
+    const c = watchCosts(wsId, setCosts, onErr);
+    return () => { a(); b(); c(); };
   }, [wsId]);
 
   const store = useMemo(() => {
@@ -49,6 +51,8 @@ export default function Aplikacja() {
     return {
       saveContract: (c: { id: string }) => report(s.saveContract(c)),
       deleteContract: (id: string) => report(s.deleteContract(id)),
+      saveCost: (c: { id: string }) => report(s.saveCost(c)),
+      deleteCost: (id: string) => report(s.deleteCost(id)),
       saveSettings: (v: unknown) => report(s.saveSettings(v)),
     };
   }, [wsId]);
@@ -65,12 +69,13 @@ export default function Aplikacja() {
   }
   if (loading || !user || wsId === undefined) return <Center><span className="text-sm text-slate-400">Ładowanie…</span></Center>;
   if (wsId === null) return <NewWorkspace uid={user.uid} email={user.email ?? ''} onCreated={setWsId} />;
-  if (!ws || !contracts || !store) return <Center><span className="text-sm text-slate-400">Ładowanie danych…</span></Center>;
+  if (!ws || !contracts || !costs || !store) return <Center><span className="text-sm text-slate-400">Ładowanie danych…</span></Center>;
 
   return (
     <>
       <CashflowApp
         contracts={contracts}
+        costs={costs}
         settings={(ws.settings as any) ?? DEFAULT_SETTINGS}
         store={store}
         workspaceName={ws.name}
