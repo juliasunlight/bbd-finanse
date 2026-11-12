@@ -2477,8 +2477,27 @@ function AnalyticsView({ contracts, costs = [], settings }) {
       map[ctr.serviceName].netProfit += calc.netProfit;
     });
 
-    return Object.values(map).sort((a, b) => b.netRevenue - a.netRevenue);
-  }, [contracts, settings]);
+    // Koszty firmy: przypisane do produktu liczą się w jego wyniku, pozostałe w osobnym wierszu
+    const shared = { net: 0, relief: 0, citRelief: 0, count: 0 };
+    costs.forEach((c) => {
+      const cc = calculateCostFinancials(c, settings);
+      const target = c.serviceName && map[c.serviceName];
+      if (target) {
+        target.subCost += cc.net;
+        target.taxes -= cc.taxRelief;
+        target.netProfit += cc.citRelief - cc.net;
+      } else {
+        shared.net += cc.net;
+        shared.relief += cc.taxRelief;
+        shared.citRelief += cc.citRelief;
+        shared.count += 1;
+      }
+    });
+
+    const list = Object.values(map).sort((a, b) => b.netRevenue - a.netRevenue);
+    list.shared = shared;
+    return list;
+  }, [contracts, costs, settings]);
 
   const maxMonthlyVal = useMemo(() => {
     let max = 1000;
@@ -2704,7 +2723,7 @@ function AnalyticsView({ contracts, costs = [], settings }) {
             Rentowność według produktów marki
           </h3>
           <p className="text-xs text-slate-500 mb-4">
-            Porównanie przychodu netto, kosztów podwykonawców, podatków oraz czystego zysku
+            Porównanie przychodu netto, kosztów (podwykonawcy, koszty projektu i koszty firmy przypisane do produktu), podatków oraz czystego zysku
           </p>
 
           <div className="space-y-4">
@@ -2762,11 +2781,39 @@ function AnalyticsView({ contracts, costs = [], settings }) {
 
                   <div className="flex justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/70">
                     <span>Koszty: -{formatPLN(item.subCost)}</span>
-                    <span>Podatki (VAT+PIT): -{formatPLN(item.taxes)}</span>
+                    <span>
+                      Podatki (VAT+PIT): {item.taxes >= 0 ? '-' : '+'}
+                      {formatPLN(Math.abs(item.taxes))}
+                    </span>
                   </div>
                 </div>
               );
             })}
+
+            {serviceStats.shared && serviceStats.shared.count > 0 && (
+              <div className="p-3.5 rounded-xl bg-orange-50/70 border border-orange-200 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 text-sm">
+                    Koszty wspólne firmy{' '}
+                    <span className="text-xs text-slate-500 font-normal">
+                      ({serviceStats.shared.count} poz., bez przypisanego produktu)
+                    </span>
+                  </span>
+                </div>
+                <div className="flex justify-between text-[11px] text-slate-600">
+                  <span>Koszty netto: -{formatPLN(serviceStats.shared.net)}</span>
+                  <span className="text-emerald-700">
+                    Ulga VAT + PIT/CIT: +{formatPLN(serviceStats.shared.relief)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-800 pt-1 border-t border-orange-200">
+                  <span>Wpływ na zysk netto:</span>
+                  <span className="text-rose-700">
+                    -{formatPLN(serviceStats.shared.net - serviceStats.shared.citRelief)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2787,6 +2834,7 @@ function CostModal({ isOpen, onClose, onSave, onDelete, initialCost, settings })
     netAmount: '',
     vatRate: Number(settings.vatRate) || 23,
     paid: false,
+    serviceName: '',
     notes: ''
   });
   const [form, setForm] = useState(empty);
@@ -2854,6 +2902,13 @@ function CostModal({ isOpen, onClose, onSave, onDelete, initialCost, settings })
                 {COST_VAT_OPTIONS.map((r) => <option key={r} value={r}>{r === 0 ? 'Bez VAT / zw.' : `${r}%`}</option>)}
               </select>
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Przypisz do produktu</label>
+            <select className={field} value={form.serviceName || ''} onChange={(e) => setForm({ ...form, serviceName: e.target.value })}>
+              <option value="">Cała firma (koszt wspólny)</option>
+              {(settings.services || []).map((sv) => <option key={sv.id || sv.name} value={sv.name}>{sv.name}</option>)}
+            </select>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={!!form.paid} onChange={(e) => setForm({ ...form, paid: e.target.checked })} />
@@ -2952,7 +3007,9 @@ function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
                     <td className="px-4 py-3 whitespace-nowrap font-semibold text-slate-700">{formatFullDate(c.date)}</td>
                     <td className="px-3 py-3">
                       <div className="font-bold text-slate-900">{c.name}</div>
-                      <div className="text-[11px] text-slate-500">{c.category}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {c.category} • {c.serviceName || 'Cała firma'}
+                      </div>
                     </td>
                     <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{formatPLN(cc.net)}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap text-slate-600">
