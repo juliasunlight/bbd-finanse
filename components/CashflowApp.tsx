@@ -1024,22 +1024,24 @@ function PrintView({ onClose, contracts, costs, settings, workspaceName, initial
       fContracts.forEach((ctr) => {
         const c = calculateContractFinancials(ctr, settings);
         const k = ctr.clientName || '—';
-        if (!map[k]) map[k] = { n: 0, services: new Set(), net: 0, gross: 0, paid: 0, rem: 0, overdue: 0, costs: 0, profit: 0 };
+        if (!map[k]) map[k] = { n: 0, services: new Set(), first: '', last: '', net: 0, gross: 0, paid: 0, rem: 0, overdue: 0, costs: 0, profit: 0 };
         const m = map[k];
+        if (ctr.startDate && (!m.first || ctr.startDate < m.first)) m.first = ctr.startDate;
+        if (ctr.endDate && (!m.last || ctr.endDate > m.last)) m.last = ctr.endDate;
         m.n += 1; m.services.add(ctr.serviceName); m.net += c.netValue; m.gross += c.grossValue; m.paid += c.paidGross;
         m.rem += c.remainingGross; m.costs += c.totalCostsNet; m.profit += c.netProfit;
         m.overdue += (ctr.installments || []).filter((i) => !i.paid && i.dueDate && i.dueDate < today).reduce((s, i) => s + (Number(i.amount) || 0), 0);
       });
       const rows = Object.entries(map).sort((a, b) => b[1].net - a[1].net)
-        .map(([k, m]) => [k, m.n, Array.from(m.services).join(', '), m.net, m.gross, m.paid, m.rem, m.overdue, m.costs, m.profit, m.net ? (m.profit / m.net) * 100 : 0]);
+        .map(([k, m]) => [k, m.n, m.first || m.last ? `${formatFullDate(m.first)} – ${formatFullDate(m.last)}` : '—', Array.from(m.services).join(', '), m.net, m.gross, m.paid, m.rem, m.overdue, m.costs, m.profit, m.net ? (m.profit / m.net) * 100 : 0]);
       const t = (i) => sum(rows, (r) => r[i]);
-      const tNet = t(3);
+      const tNet = t(4);
       return {
         title: 'Zestawienie klientów (zbiorcze)', file: 'zestawienie_klientow',
-        columns: [{ label: 'Klient' }, { label: 'Umów', num: true, int: true }, { label: 'Usługi' }, { label: 'Netto', num: true }, { label: 'Brutto', num: true }, { label: 'Wpłacono', num: true }, { label: 'Do zapłaty', num: true }, { label: 'w tym po terminie', num: true }, { label: 'Koszty netto', num: true }, { label: 'Zysk netto (szac.)', num: true }, { label: 'Marża', num: true, pct: true }],
+        columns: [{ label: 'Klient' }, { label: 'Umów', num: true, int: true }, { label: 'Okres umowy' }, { label: 'Usługi' }, { label: 'Netto', num: true }, { label: 'Brutto', num: true }, { label: 'Wpłacono', num: true }, { label: 'Do zapłaty', num: true }, { label: 'w tym po terminie', num: true }, { label: 'Koszty netto', num: true }, { label: 'Zysk netto (szac.)', num: true }, { label: 'Marża', num: true, pct: true }],
         rows,
-        foot: [`Razem: ${rows.length} klientów`, t(1), '', tNet, t(4), t(5), t(6), t(7), t(8), t(9), tNet ? (t(9) / tNet) * 100 : 0],
-        highlight: (i) => rows[i][7] > 0
+        foot: [`Razem: ${rows.length} klientów`, t(1), '', '', tNet, t(5), t(6), t(7), t(8), t(9), t(10), tNet ? (t(10) / tNet) * 100 : 0],
+        highlight: (i) => rows[i][8] > 0
       };
     }
     if (form === 'receivables') {
