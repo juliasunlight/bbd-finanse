@@ -941,13 +941,15 @@ function ContractCard({ contract, settings, Header }) {
   );
 }
 
-function PrintView({ onClose, contracts, costs, settings, workspaceName }) {
+// Raporty dostają wszystkie umowy i koszty; filtry z głównego ekranu trafiają tylko jako
+// wartości startowe widocznych filtrów raportu (można je wyczyścić).
+function PrintView({ onClose, contracts, costs, settings, workspaceName, initialFilters = {} }) {
   const [form, setForm] = useState('clients');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [service, setService] = useState('');
-  const [status, setStatus] = useState('');
-  const [client, setClient] = useState('');
+  const [service, setService] = useState(initialFilters.service || '');
+  const [status, setStatus] = useState(initialFilters.status || '');
+  const [client, setClient] = useState(initialFilters.client || '');
   const [cardClient, setCardClient] = useState('');
 
   useEffect(() => {
@@ -1240,10 +1242,19 @@ function PrintView({ onClose, contracts, costs, settings, workspaceName }) {
             <option value="">Wszystkie statusy</option>
             {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <input type="search" placeholder="Szukaj klienta…" value={client} onChange={(e) => setClient(e.target.value)} className={`${field} w-40`} />
+          <input type="search" autoComplete="off" placeholder="Szukaj klienta…" value={client} onChange={(e) => setClient(e.target.value)} className={`${field} w-40 ${client ? 'ring-2 ring-amber-400' : ''}`} />
+          {(from || to || service || status || client || cardClient) && (
+            <button
+              type="button"
+              onClick={() => { setFrom(''); setTo(''); setService(''); setStatus(''); setClient(''); setCardClient(''); }}
+              className="px-2 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold cursor-pointer"
+            >
+              Wyczyść filtry
+            </button>
+          )}
           {form === 'clientCards' && (
             <>
-              <input list="bbd-clients" placeholder="Jeden klient (puste = wszyscy)" value={cardClient} onChange={(e) => setCardClient(e.target.value)} className={`${field} w-56`} />
+              <input list="bbd-clients" autoComplete="off" placeholder="Jeden klient (puste = wszyscy)" value={cardClient} onChange={(e) => setCardClient(e.target.value)} className={`${field} w-56`} />
               <datalist id="bbd-clients">{clientNames.map((c) => <option key={c} value={c} />)}</datalist>
             </>
           )}
@@ -4835,10 +4846,15 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       {printOpen && (
         <PrintView
           onClose={() => setPrintOpen(false)}
-          contracts={filteredContracts}
-          costs={kpi.costsApplied ? costs : []}
+          contracts={contracts}
+          costs={costs}
           settings={settings}
           workspaceName={workspaceName}
+          initialFilters={{
+            service: serviceFilter !== 'Wszystkie' ? serviceFilter : '',
+            status: statusFilter !== 'Wszystkie' ? statusFilter : '',
+            client: searchQuery.trim()
+          }}
         />
       )}
 
