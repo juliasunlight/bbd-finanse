@@ -4807,7 +4807,7 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
     }
   };
 
-  // Gdy otwarty jest Asystent dnia, Lotek „przelatuje” do jego okna (nie pokazujemy dwóch naraz)
+  // Gdy otwarty jest Asystent, Lotek „przelatuje” do jego okna (nie pokazujemy dwóch naraz)
   if (away) return null;
 
   if (hidden) {
@@ -4905,7 +4905,7 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
  * setContracts/setSettings zachowują dawny interfejs (updater), ale zapisują tylko różnice.
  */
 // ============================================================================
-// ASYSTENT DNIA: powitanie i szybkie wprowadzanie danych w jednym oknie
+// ASYSTENT: powitanie i szybkie wprowadzanie danych w jednym oknie
 // ============================================================================
 
 const uid = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -5175,7 +5175,7 @@ function DailyAssistant({ contracts, costs, settings, userEmail, onClose, onSave
         <div className="bg-[#1E293B] text-white px-5 sm:px-6 py-4 shrink-0 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Asystent dnia • {formatFullDate(today)}</span>
+              <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Asystent • {formatFullDate(today)}</span>
               <h2 className="text-lg font-bold mt-0.5">
                 {step === 'home' ? `${greet}${hello ? `, ${hello}` : ''}! Co dziś robimy?` : step === 'done' ? 'Gotowe' : titles[step]}
               </h2>
@@ -5492,7 +5492,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  // Asystent dnia otwiera się sam raz dziennie (chyba że wyłączony)
+  // Asystent otwiera się sam raz dziennie (chyba że wyłączony)
   useEffect(() => {
     try {
       const today = toISODate(new Date());
@@ -5745,7 +5745,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
               type="button"
               onClick={() => setAssistantOpen(true)}
               className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
-              title="Asystent dnia: szybkie wprowadzanie wpłat, umów, kosztów i ZUS"
+              title="Asystent: szybkie wprowadzanie wpłat, umów, kosztów i ZUS"
             >
               <Sparkles className="w-4 h-4" />
               <span className="hidden sm:inline">Asystent</span>
