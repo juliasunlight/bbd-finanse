@@ -4506,6 +4506,7 @@ function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
 // ============================================================================
 
 const LOTEK_HIDE_KEY = 'bbd-lotek-hidden';
+const LOTEK_POS_KEY = 'bbd-lotek-pos';
 
 const LOTEK_TIPS = [
   'Liczby nie gryzą. Najwyżej trochę łaskoczą.',
@@ -4807,6 +4808,91 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
     }
   };
 
+  // ---- Przeciąganie Lotka po ekranie (mysz i dotyk); pozycja zapamiętana w przeglądarce ----
+  const [pos, setPos] = useState(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem(LOTEK_POS_KEY) || 'null');
+      return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+    } catch {
+      return null;
+    }
+  });
+  const [dragging, setDragging] = useState(false);
+  const drag = React.useRef(null);
+  const suppressClick = React.useRef(false);
+  const btnRef = React.useRef(null);
+
+  const clampPos = (x, y) => {
+    const el = btnRef.current;
+    const w = el ? el.offsetWidth : 144;
+    const h = el ? el.offsetHeight : 144;
+    return {
+      x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
+      y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h))
+    };
+  };
+  const savePos = (p) => {
+    try {
+      if (p) localStorage.setItem(LOTEK_POS_KEY, JSON.stringify(p));
+      else localStorage.removeItem(LOTEK_POS_KEY);
+    } catch {
+      // brak pamięci przeglądarki: pozycja tylko do odświeżenia strony
+    }
+  };
+  // Po zmianie rozmiaru okna Lotek nie ucieka poza ekran
+  useEffect(() => {
+    if (!pos) return;
+    const onResize = () => setPos((p) => (p ? clampPos(p.x, p.y) : p));
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(pos)]);
+
+  const onPointerDown = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault(); // bez zaznaczania tekstu strony podczas przeciągania
+    const rect = btnRef.current.getBoundingClientRect();
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: rect.left, oy: rect.top, moved: false };
+    suppressClick.current = false;
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
+    if (!d.moved && Math.hypot(dx, dy) < 6) return;
+    if (!d.moved) {
+      d.moved = true;
+      setDragging(true);
+      setMenu(false);
+      try {
+        btnRef.current.setPointerCapture(e.pointerId);
+      } catch {
+        // przechwycenie wskaźnika niedostępne: przeciąganie i tak działa w obrębie przycisku
+      }
+    }
+    setPos(clampPos(d.ox + dx, d.oy + dy));
+  };
+  const onPointerUp = () => {
+    const d = drag.current;
+    drag.current = null;
+    if (d && d.moved) {
+      suppressClick.current = true;
+      setDragging(false);
+      setLastActive(Date.now());
+      setPos((p) => {
+        savePos(p);
+        return p;
+      });
+    }
+  };
+  const resetPos = () => {
+    setPos(null);
+    savePos(null);
+    setMenu(false);
+  };
+
   // Gdy otwarty jest Asystent, Lotek „przelatuje” do jego okna (nie pokazujemy dwóch naraz)
   if (away) return null;
 
@@ -4824,11 +4910,38 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
     );
   }
 
+  // Po prawej połowie ekranu dymek pojawia się z lewej strony Lotka
+  const flip = pos && typeof window !== 'undefined' && pos.x > window.innerWidth / 2;
+  // W górnej połowie ekranu dymek otwiera się w dół, w dolnej w górę
+  const openDown = pos && typeof window !== 'undefined' && pos.y < window.innerHeight / 2;
+  const placement = pos ? '' : 'bottom-3 left-3';
+
   return (
-    <div className={`no-print bbd-mascot fixed bottom-3 left-3 z-40 flex items-end gap-1 pointer-events-none ${mood === 'sleepy' ? 'bbd-sleep' : ''}`}>
+    <div
+      className={`no-print bbd-mascot fixed ${placement} z-40 flex ${flip ? 'flex-row-reverse' : ''} ${openDown ? 'items-start' : 'items-end'} gap-1 pointer-events-none ${mood === 'sleepy' && !dragging ? 'bbd-sleep' : ''}`}
+      style={
+        pos
+          ? {
+              // kotwica po stronie Lotka, dymek rośnie w stronę, gdzie jest miejsce
+              ...(openDown ? { top: pos.y } : { bottom: window.innerHeight - pos.y - (btnRef.current?.offsetHeight || 144) }),
+              ...(flip ? { right: window.innerWidth - pos.x - (btnRef.current?.offsetWidth || 144) } : { left: pos.x })
+            }
+          : undefined
+      }
+    >
       <button
+        ref={btnRef}
         type="button"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        style={{ touchAction: 'none' }}
         onClick={() => {
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
           setLastActive(Date.now());
           if (mood === 'sleepy') {
             setMood('happy');
@@ -4840,15 +4953,17 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
           setAction('wave');
         }}
         onAnimationEnd={() => setAction((a) => (a === 'yawn' || a === 'scratch' || a === 'wave' ? '' : a))}
-        className={`pointer-events-auto w-28 h-28 sm:w-36 sm:h-36 drop-shadow-lg cursor-pointer select-none ${effect} ${mood === 'worried' ? 'bbd-shake' : ''}`}
-        title="Lotek — kliknij, żeby coś szybko wpisać"
-        aria-label="Pomocnik Lotek"
+        className={`pointer-events-auto w-28 h-28 sm:w-36 sm:h-36 drop-shadow-lg select-none ${dragging ? 'cursor-grabbing scale-105 -rotate-6 motion-reduce:rotate-0 motion-reduce:scale-100' : 'cursor-grab'} transition-transform ${dragging ? '' : effect} ${mood === 'worried' && !dragging ? 'bbd-shake' : ''}`}
+        title="Lotek — kliknij, żeby coś szybko wpisać; przeciągnij, żeby przenieść"
+        aria-label="Pomocnik Lotek (kliknij albo przeciągnij)"
       >
-        <LotekFigure mood={mood} action={action} talking={talking} />
+        <LotekFigure mood={dragging ? 'happy' : mood} action={dragging ? '' : action} talking={talking && !dragging} />
       </button>
 
-      {(bubble || menu) && (
-        <div className="pointer-events-auto bbd-pop mb-16 max-w-[260px] bg-white border border-slate-200 rounded-2xl rounded-bl-sm shadow-xl px-3.5 py-2.5 text-xs text-slate-800">
+      {(bubble || menu) && !dragging && (
+        <div
+          className={`pointer-events-auto bbd-pop ${openDown ? 'mt-6' : 'mb-16'} max-w-[260px] max-h-[70vh] overflow-y-auto bg-white border border-slate-200 rounded-2xl ${openDown ? (flip ? 'rounded-tr-sm' : 'rounded-tl-sm') : flip ? 'rounded-br-sm' : 'rounded-bl-sm'} shadow-xl px-3.5 py-2.5 text-xs text-slate-800`}
+        >
           {bubble && !menu && (
             <>
               <div className="leading-relaxed min-h-[1.2em]">{typed}</div>
@@ -4885,6 +5000,11 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
               >
                 Powiedz coś miłego
               </button>
+              {pos && (
+                <button type="button" onClick={resetPos} className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-semibold cursor-pointer">
+                  Wróć do rogu
+                </button>
+              )}
               <button type="button" onClick={() => hide(true)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer">
                 Schowaj Lotka
               </button>
