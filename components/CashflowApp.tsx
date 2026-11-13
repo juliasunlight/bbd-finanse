@@ -4652,7 +4652,7 @@ function LotekFigure({ mood, action, talking }) {
   );
 }
 
-function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssistant, onOpenReports }) {
+function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssistant, onOpenReports, away = false }) {
   const today = toISODate(new Date());
   const [hidden, setHidden] = useState(() => {
     try {
@@ -4807,6 +4807,9 @@ function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssis
     }
   };
 
+  // Gdy otwarty jest Asystent dnia, Lotek „przelatuje” do jego okna (nie pokazujemy dwóch naraz)
+  if (away) return null;
+
   if (hidden) {
     return (
       <button
@@ -4954,6 +4957,32 @@ function buildInstallments(plan, gross, start, end) {
 }
 
 const ASSISTANT_KEY = 'bbd-assistant';
+
+// Lotek w oknie asystenta: mówi podpowiedź do bieżącego kroku (tekst pisany, usta w ruchu)
+function LotekInline({ mood, line, celebrate }) {
+  const [typed, setTyped] = useState('');
+  useEffect(() => {
+    setTyped('');
+    let i = 0;
+    const id = setInterval(() => {
+      i += 2;
+      setTyped(line.slice(0, i));
+      if (i >= line.length) clearInterval(id);
+    }, 28);
+    return () => clearInterval(id);
+  }, [line]);
+  const talking = typed.length < line.length;
+  return (
+    <div className="flex items-center gap-3 min-w-0">
+      <div className={`bbd-mascot w-16 h-16 sm:w-[72px] sm:h-[72px] shrink-0 ${celebrate ? 'bbd-jump' : ''}`}>
+        <LotekFigure mood={mood} action={celebrate ? 'wave' : ''} talking={talking} />
+      </div>
+      <div className="relative bg-white text-slate-800 text-xs sm:text-[13px] font-semibold leading-snug rounded-2xl rounded-bl-sm px-3 py-2 shadow-sm min-h-[2.4em] min-w-0">
+        {typed}
+      </div>
+    </div>
+  );
+}
 
 function DailyAssistant({ contracts, costs, settings, userEmail, onClose, onSaveContract, onSaveContracts, onSaveCost, onOpenReports }) {
   const today = toISODate(new Date());
@@ -5124,20 +5153,38 @@ function DailyAssistant({ contracts, costs, settings, userEmail, onClose, onSave
   ];
   const titles = { pay: 'Klient zapłacił', contract: 'Nowy klient / umowa', cost: 'Zapłacona faktura kosztowa', sub: 'Wypłata podwykonawcy', zus: 'ZUS za miesiąc' };
 
+  // Co mówi Lotek i jaką ma minę na każdym kroku
+  const taxSoon = nextTax[0] && Math.round((parseDate(nextTax[0].date) - parseDate(today)) / 86400000) <= 7 ? nextTax[0] : null;
+  const lotek = {
+    home: overdue.length
+      ? { mood: 'worried', line: `Mamy ${overdue.length} ${overdue.length === 1 ? 'ratę' : 'raty'} po terminie (${formatPLN(sumAmt(overdue))}). Zaczniemy od „Klient zapłacił”?` }
+      : taxSoon
+      ? { mood: 'thinking', line: `Do ${formatShortDate(taxSoon.date)} ${taxSoon.kind}: ${formatPLN(taxSoon.amount)}. Reszta pod kontrolą. Co wpisujemy?` }
+      : { mood: 'happy', line: 'Wszystko pod kontrolą. Wybierz, co wpisujemy, a ja rozniosę to po tabelach.' },
+    pay: { mood: 'happy', line: 'Zaznacz raty, które wpłynęły. Należności i cash flow przeliczę sam.' },
+    contract: { mood: 'thinking', line: 'Wpisz klienta i kwotę netto. Raty, VAT i PIT/CIT rozłożę sam.' },
+    cost: { mood: 'thinking', line: 'Kwota brutto z faktury wystarczy. VAT do odliczenia wyliczę.' },
+    sub: { mood: 'calm', line: 'Zaznacz, komu już zapłaciłeś. Zobowiązania same się zmniejszą.' },
+    zus: { mood: 'calm', line: `Kwoty podpowiadam z zeszłego miesiąca. Sprawdź i zapisz.` },
+    done: { mood: 'celebrate', line: 'Brawo! Wszystko rozniesione po tabelach. Coś jeszcze?' }
+  }[step] || { mood: 'calm', line: 'Jestem tu, gdyby co.' };
+
   return (
     <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-fade-in" onClick={(e) => e.stopPropagation()}>
-        <div className="bg-[#1E293B] text-white px-6 py-4 flex items-start justify-between shrink-0">
-          <div>
-            <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Asystent dnia</span>
-            <h2 className="text-lg font-bold mt-0.5">
-              {step === 'home' ? `${greet}${hello ? `, ${hello}` : ''}! Co dziś robimy?` : step === 'done' ? 'Gotowe' : titles[step]}
-            </h2>
-            <div className="text-xs text-slate-300 mt-0.5">{formatFullDate(today)}</div>
+        <div className="bg-[#1E293B] text-white px-5 sm:px-6 py-4 shrink-0 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Asystent dnia • {formatFullDate(today)}</span>
+              <h2 className="text-lg font-bold mt-0.5">
+                {step === 'home' ? `${greet}${hello ? `, ${hello}` : ''}! Co dziś robimy?` : step === 'done' ? 'Gotowe' : titles[step]}
+              </h2>
+            </div>
+            <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer" title="Zamknij (Esc)">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer" title="Zamknij (Esc)">
-            <X className="w-5 h-5" />
-          </button>
+          <LotekInline key={step} mood={lotek.mood} line={lotek.line} celebrate={step === 'done'} />
         </div>
 
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-4">
@@ -5781,6 +5828,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
         settings={settings}
         userEmail={userEmail}
         toast={toastMessage}
+        away={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}
         onOpenReports={() => setPrintOpen(true)}
       />
