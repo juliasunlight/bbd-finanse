@@ -48,7 +48,7 @@ const STEPS = [
 const ECOSYSTEM = [
   { name: 'Biznes bez dramatów', href: 'https://biznesbezdramatow.com', label: 'biznesbezdramatow.com', d: 'Diagnoza firmy, mentoring 1:1 i prezes na zastępstwo. Pomagamy właścicielowi przestać ciągnąć wszystko na sobie i przestawić firmę na system.' },
   { name: 'Męska Twierdza', href: 'https://meskatwierdza.online', label: 'meskatwierdza.online', d: 'Zamknięte koło dla mężczyzn, którzy prowadzą firmy. Cykl 90 dni, cotygodniowe spotkania w stałym gronie.' },
-  { name: 'Kariera bez dramatów', href: 'https://karierabezdramatow.online', label: 'karierabezdramatow.online', d: 'Doradztwo zawodowe i wsparcie w rozwoju kariery, prowadzone przez Yuliię.' },
+  { name: 'Kariera bez dramatów', href: 'https://www.karierabezdramatow.online', label: 'karierabezdramatow.online', d: 'Mentoring kariery 1:1 dla osób, które chcą zmienić pracę, wrócić na rynek pracy albo zrozumieć, w którą stronę iść dalej. Dziesięć spotkań i AI-mentor między sesjami.' },
   { name: 'Biznes bez dramatów · Finanse', href: null, label: 'jesteś tutaj', d: 'Harmonogram umów, cash flow, podatki i raporty dla firm usługowych.' },
 ];
 
@@ -269,7 +269,7 @@ export default function Landing() {
           <span className="flex gap-4">
             <a href="https://biznesbezdramatow.com" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">Biznes bez dramatów</a>
             <a href="https://meskatwierdza.online" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">Męska Twierdza</a>
-            <a href="https://karierabezdramatow.online" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">Kariera bez dramatów</a>
+            <a href="https://www.karierabezdramatow.online" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">Kariera bez dramatów</a>
           </span>
         </div>
       </footer>
