@@ -34,6 +34,13 @@ export default function Login() {
     if (!loading && user) router.replace('/aplikacja');
   }, [user, loading, router]);
 
+  // ze strony głównej „Załóż konto” otwiera od razu zakładkę nowego konta
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('nowe')) setMode('register');
+    } catch {}
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -60,6 +67,8 @@ export default function Login() {
 
   return (
     <main className="min-h-screen grid place-items-center px-4 py-10">
+      <div className="w-full max-w-sm">
+      <a href="/" className="inline-block mb-3 text-xs text-slate-500 hover:text-slate-800">← Strona główna</a>
       <div className="w-full max-w-sm bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-7">
         <Brand />
         {!firebaseConfigured && (
@@ -112,6 +121,7 @@ export default function Login() {
             Jeśli ktoś zaprosił Cię do swojej firmy, załóż konto na ten sam e-mail, a dołączysz automatycznie.
           </p>
         )}
+      </div>
       </div>
     </main>
   );
