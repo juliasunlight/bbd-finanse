@@ -31,7 +31,8 @@ import {
   Info,
   LogOut,
   UserPlus,
-  Printer
+  Printer,
+  Receipt
 } from 'lucide-react';
 
 // ============================================================================
@@ -4506,6 +4507,521 @@ function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
  * Dane przychodzą z Firestore (props), a każda zmiana jest zapisywana przez store.
  * setContracts/setSettings zachowują dawny interfejs (updater), ale zapisują tylko różnice.
  */
+// ============================================================================
+// ASYSTENT DNIA: powitanie i szybkie wprowadzanie danych w jednym oknie
+// ============================================================================
+
+const uid = (p) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+function addMonthsISO(iso, n) {
+  const d = parseDate(iso);
+  if (!d) return iso;
+  const day = d.getDate();
+  const r = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const last = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate();
+  r.setDate(Math.min(day, last));
+  return toISODate(r);
+}
+
+function buildInstallments(plan, gross, start, end) {
+  const g = Math.round(Number(gross) || 0);
+  if (plan === 'full') return [{ id: uid('r'), label: 'Całość (100%)', amount: g, dueDate: start, paid: false }];
+  if (plan === 'half') {
+    const a = Math.round(g / 2);
+    const mid = addDays(start, Math.max(1, Math.round(((parseDate(end) - parseDate(start)) / 86400000) / 2)));
+    return [
+      { id: uid('r'), label: 'Rata 1 (50%)', amount: a, dueDate: start, paid: false },
+      { id: uid('r'), label: 'Rata 2 (50%)', amount: g - a, dueDate: mid, paid: false }
+    ];
+  }
+  if (plan === '403030') {
+    const a = Math.round(g * 0.4);
+    const b = Math.round(g * 0.3);
+    const days = Math.max(2, Math.round((parseDate(end) - parseDate(start)) / 86400000));
+    return [
+      { id: uid('r'), label: 'Rata 1 (40%)', amount: a, dueDate: start, paid: false },
+      { id: uid('r'), label: 'Rata 2 (30%)', amount: b, dueDate: addDays(start, Math.round(days / 2)), paid: false },
+      { id: uid('r'), label: 'Rata 3 (30%)', amount: g - a - b, dueDate: end, paid: false }
+    ];
+  }
+  // co miesiąc przez czas trwania umowy
+  const s = parseDate(start);
+  const e = parseDate(end);
+  let n = s && e ? (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1 : 1;
+  n = Math.max(1, Math.min(12, n));
+  const part = Math.floor(g / n);
+  return Array.from({ length: n }, (_, k) => ({
+    id: uid('r'),
+    label: `Rata ${k + 1}/${n}`,
+    amount: k === n - 1 ? g - part * (n - 1) : part,
+    dueDate: addMonthsISO(start, k),
+    paid: false
+  }));
+}
+
+const ASSISTANT_KEY = 'bbd-assistant';
+
+function DailyAssistant({ contracts, costs, settings, userEmail, onClose, onSaveContract, onSaveContracts, onSaveCost, onOpenReports }) {
+  const today = toISODate(new Date());
+  const [step, setStep] = useState('home');
+  const [done, setDone] = useState(null);
+  const [hideAuto, setHideAuto] = useState(() => {
+    try { return localStorage.getItem(`${ASSISTANT_KEY}-off`) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const toggleAuto = (v) => {
+    setHideAuto(v);
+    try { localStorage.setItem(`${ASSISTANT_KEY}-off`, v ? '1' : '0'); } catch {}
+  };
+
+  const vatR = Number(settings.vatRate) || 0;
+  const services = settings.services || [];
+  const clientNames = Array.from(new Set(contracts.map((c) => c.clientName).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pl'));
+  const name = (userEmail || '').split('@')[0].split(/[._-]/)[0];
+  const hello = name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Dzień dobry' : hour < 18 ? 'Cześć' : 'Dobry wieczór';
+
+  // ---------- podsumowanie dnia ----------
+  const in7 = addDays(today, 7);
+  const unpaidInst = [];
+  contracts.forEach((c) => (c.installments || []).forEach((i) => !i.paid && unpaidInst.push({ c, i })));
+  const overdue = unpaidInst.filter((x) => x.i.dueDate && x.i.dueDate < today);
+  const soonIn = unpaidInst.filter((x) => x.i.dueDate >= today && x.i.dueDate <= in7);
+  const unpaidSubs = contracts.filter((c) => calculateContractFinancials(c, settings).effectiveSubCost > 0 && c.subStatus === 'Do zapłaty');
+  const soonOut = [
+    ...unpaidSubs.filter((c) => c.subDueDate && c.subDueDate <= in7).map((c) => calculateContractFinancials(c, settings).subGross),
+    ...costs.filter((k) => !k.paid && k.date && k.date <= in7).map((k) => calculateCostFinancials(k, settings).gross)
+  ];
+  const schedule = useMemo(() => buildTaxSchedule(contracts, costs, settings), [contracts, costs, settings]);
+  const nextTax = schedule.payments.filter((p) => p.date >= today).slice(0, 2);
+  const sumAmt = (arr) => arr.reduce((s, x) => s + (Number(x.i ? x.i.amount : x) || 0), 0);
+
+  const finish = (title, lines) => { setDone({ title, lines }); setStep('done'); };
+
+  // ---------- 1. Klient zapłacił ----------
+  const [paySearch, setPaySearch] = useState('');
+  const [paySel, setPaySel] = useState({});
+  const payList = unpaidInst
+    .filter((x) => !paySearch || x.c.clientName.toLowerCase().includes(paySearch.toLowerCase()))
+    .sort((a, b) => String(a.i.dueDate).localeCompare(String(b.i.dueDate)));
+  const savePayments = () => {
+    const keys = Object.keys(paySel).filter((k) => paySel[k]);
+    if (!keys.length) return;
+    const changed = contracts
+      .filter((c) => keys.some((k) => k.startsWith(c.id + '|')))
+      .map((c) => ({ ...c, installments: c.installments.map((i) => (paySel[`${c.id}|${i.id}`] ? { ...i, paid: true } : i)) }));
+    onSaveContracts(changed);
+    const total = payList.filter((x) => paySel[`${x.c.id}|${x.i.id}`]).reduce((s, x) => s + (Number(x.i.amount) || 0), 0);
+    setPaySel({});
+    finish(`Zapisano wpłaty: ${formatPLN(total)}`, [
+      `${keys.length} ${keys.length === 1 ? 'rata oznaczona' : 'raty oznaczone'} jako opłacone`,
+      'Zaktualizowano: lista umów, karty klientów, cash flow, należności'
+    ]);
+  };
+
+  // ---------- 2. Nowa umowa ----------
+  const firstSrv = services[0] || { name: '', defaultDays: 30, defaultPrice: 0, defaultSubCost: 0 };
+  const [nc, setNc] = useState(() => ({
+    client: '', service: firstSrv.name, start: today, days: firstSrv.defaultDays, net: firstSrv.defaultPrice,
+    plan: 'half', subName: '', subCost: firstSrv.defaultSubCost || 0, subVat: 0, status: 'Zaplanowane'
+  }));
+  const pickService = (sn) => {
+    const s = services.find((x) => x.name === sn);
+    setNc((p) => ({ ...p, service: sn, days: s ? s.defaultDays : p.days, net: s ? s.defaultPrice : p.net, subCost: s ? s.defaultSubCost || 0 : p.subCost }));
+  };
+  const ncEnd = addDays(nc.start, Math.max(1, Number(nc.days) || 1));
+  const ncGross = Math.round((Number(nc.net) || 0) * (1 + vatR / 100));
+  const ncInst = buildInstallments(nc.plan, ncGross, nc.start, ncEnd);
+  const saveContract = () => {
+    if (!nc.client.trim() || !(Number(nc.net) > 0)) return;
+    const sub = Number(nc.subCost) || 0;
+    const ctr = {
+      id: uid('ctr'),
+      clientName: nc.client.trim(),
+      serviceName: nc.service,
+      status: nc.status,
+      startDate: nc.start,
+      endDate: ncEnd,
+      netValue: Number(nc.net) || 0,
+      installments: ncInst,
+      subcontractorName: sub > 0 ? nc.subName.trim() : '',
+      subCost: sub,
+      subVatRate: Number(nc.subVat) || 0,
+      subDueDate: sub > 0 ? addDays(ncEnd, -5) : '',
+      subStatus: sub > 0 ? 'Do zapłaty' : 'Brak',
+      costs: [],
+      taxDueDate: getNextMonth20th(ncEnd),
+      notes: ''
+    };
+    onSaveContract(ctr);
+    finish(`Dodano umowę: ${ctr.clientName}`, [
+      `${ctr.serviceName}: ${formatFullDate(ctr.startDate)} – ${formatFullDate(ctr.endDate)}`,
+      `Netto ${formatPLN(ctr.netValue)}, brutto ${formatPLN(ncGross)}, ${ncInst.length} ${ncInst.length === 1 ? 'rata' : 'raty'}`,
+      sub > 0 ? `Podwykonawca: ${formatPLN(sub)} netto do ${formatFullDate(ctr.subDueDate)}` : 'Bez podwykonawcy',
+      'Zaktualizowano: harmonogram, raty, VAT i PIT/CIT, raporty'
+    ]);
+    setNc((p) => ({ ...p, client: '' }));
+  };
+
+  // ---------- 3. Faktura kosztowa ----------
+  const [kc, setKc] = useState({ name: '', amount: '', mode: 'gross', vat: 23, date: today, target: 'firm', category: COST_CATEGORIES[0], product: '', contractId: '', paid: true });
+  const kcAmount = Number(kc.amount) || 0;
+  const kcNet = kc.mode === 'gross' ? Math.round((kcAmount / (1 + (Number(kc.vat) || 0) / 100)) * 100) / 100 : kcAmount;
+  const kcVat = Math.round(kcNet * ((Number(kc.vat) || 0) / 100) * 100) / 100;
+  const saveCost = () => {
+    if (!kc.name.trim() || kcNet <= 0) return;
+    if (kc.target === 'contract') {
+      const ctr = contracts.find((c) => c.id === kc.contractId);
+      if (!ctr) return;
+      onSaveContract({ ...ctr, costs: [...(ctr.costs || []), { id: uid('k'), name: kc.name.trim(), net: kcNet, vatRate: Number(kc.vat) || 0, dueDate: kc.date, paid: kc.paid }] });
+      finish(`Dodano koszt do umowy: ${ctr.clientName}`, [`${kc.name.trim()}: netto ${formatPLN(kcNet)}, VAT ${formatPLN(kcVat)}`, 'Zaktualizowano: wynik umowy, VAT naliczony, PIT/CIT, cash flow']);
+    } else {
+      onSaveCost({ id: uid('cost'), name: kc.name.trim(), category: kc.category, date: kc.date, netAmount: kcNet, vatRate: Number(kc.vat) || 0, paid: kc.paid, serviceName: kc.product, notes: '' });
+      finish(`Dodano koszt firmy: ${kc.name.trim()}`, [`Netto ${formatPLN(kcNet)}, VAT ${formatPLN(kcVat)}, brutto ${formatPLN(kcNet + kcVat)}`, 'Zaktualizowano: koszty firmy, VAT naliczony, PIT/CIT, cash flow']);
+    }
+    setKc((p) => ({ ...p, name: '', amount: '' }));
+  };
+
+  // ---------- 4. Podwykonawca ----------
+  const [subSel, setSubSel] = useState({});
+  const saveSubs = () => {
+    const ids = Object.keys(subSel).filter((k) => subSel[k]);
+    if (!ids.length) return;
+    onSaveContracts(contracts.filter((c) => ids.includes(c.id)).map((c) => ({ ...c, subStatus: 'Zapłacono' })));
+    setSubSel({});
+    finish(`Zapisano wypłaty podwykonawcom: ${ids.length}`, ['Zaktualizowano: lista umów, zobowiązania, cash flow']);
+  };
+
+  // ---------- 5. ZUS ----------
+  const lastOf = (cat) => [...costs].filter((k) => k.category === cat).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  const prevMonth = monthLabel(addMonthKey(today.slice(0, 7), -1));
+  const [zus, setZus] = useState(() => ({
+    social: lastOf(ZUS_SOCIAL)?.netAmount || '',
+    health: lastOf(ZUS_HEALTH)?.netAmount || '',
+    date: today,
+    paid: true
+  }));
+  const saveZus = () => {
+    const s = Number(zus.social) || 0;
+    const h = Number(zus.health) || 0;
+    if (!s && !h) return;
+    if (s) onSaveCost({ id: uid('cost'), name: `ZUS społeczny za ${prevMonth}`, category: ZUS_SOCIAL, date: zus.date, netAmount: s, vatRate: 0, paid: zus.paid, serviceName: '', notes: '' });
+    if (h) onSaveCost({ id: uid('cost'), name: `Składka zdrowotna za ${prevMonth}`, category: ZUS_HEALTH, date: zus.date, netAmount: h, vatRate: 0, paid: zus.paid, serviceName: '', notes: '' });
+    finish(`Zapisano ZUS za ${prevMonth}`, [s ? `ZUS społeczny: ${formatPLN(s)}` : '', h ? `Składka zdrowotna: ${formatPLN(h)}` : '', 'Zaktualizowano: koszty firmy, zaliczka PIT/CIT, cash flow'].filter(Boolean));
+  };
+
+  // ---------- UI ----------
+  const field = 'w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm';
+  const label = 'block text-xs font-semibold text-slate-700 mb-1';
+  const primary = 'px-5 py-2.5 rounded-xl bg-[#991B1B] hover:bg-[#B91C1C] text-white text-sm font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed';
+  const ghost = 'px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer';
+  const tiles = [
+    ['pay', Wallet, 'Klient zapłacił', 'Zaznacz opłacone raty', 'bg-emerald-50 border-emerald-200 text-emerald-900'],
+    ['contract', Plus, 'Nowy klient / umowa', 'Raty i podatki policzą się same', 'bg-amber-50 border-amber-200 text-amber-900'],
+    ['cost', Receipt, 'Zapłaciłem fakturę', 'Koszt firmy albo koszt klienta', 'bg-orange-50 border-orange-200 text-orange-900'],
+    ['sub', Users, 'Zapłaciłem podwykonawcy', `${unpaidSubs.length} do zapłaty`, 'bg-rose-50 border-rose-200 text-rose-900'],
+    ['zus', Landmark, 'ZUS za miesiąc', 'Społeczny i zdrowotna jednym ruchem', 'bg-purple-50 border-purple-200 text-purple-900'],
+    ['look', BarChart3, 'Tylko sprawdzam', 'Raporty i podsumowania', 'bg-slate-50 border-slate-200 text-slate-800']
+  ];
+  const titles = { pay: 'Klient zapłacił', contract: 'Nowy klient / umowa', cost: 'Zapłacona faktura kosztowa', sub: 'Wypłata podwykonawcy', zus: 'ZUS za miesiąc' };
+
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-fade-in" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-[#1E293B] text-white px-6 py-4 flex items-start justify-between shrink-0">
+          <div>
+            <span className="text-[11px] font-bold tracking-[0.18em] text-[#DC2626] uppercase block">Asystent dnia</span>
+            <h2 className="text-lg font-bold mt-0.5">
+              {step === 'home' ? `${greet}${hello ? `, ${hello}` : ''}! Co dziś robimy?` : step === 'done' ? 'Gotowe' : titles[step]}
+            </h2>
+            <div className="text-xs text-slate-300 mt-0.5">{formatFullDate(today)}</div>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer" title="Zamknij (Esc)">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-4">
+          {step === 'home' && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                <button type="button" onClick={() => setStep('pay')} className={`text-left rounded-xl border p-3 cursor-pointer ${overdue.length ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className="text-slate-500">Raty po terminie</div>
+                  <div className={`text-base font-extrabold ${overdue.length ? 'text-rose-700' : 'text-slate-800'}`}>{overdue.length ? `${overdue.length} • ${formatPLN(sumAmt(overdue))}` : 'brak'}</div>
+                </button>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-slate-500">Najbliższe 7 dni</div>
+                  <div className="font-bold text-emerald-700">+{formatPLN(sumAmt(soonIn))} <span className="text-slate-400 font-normal">wpływy</span></div>
+                  <div className="font-bold text-rose-700">-{formatPLN(soonOut.reduce((s, x) => s + x, 0))} <span className="text-slate-400 font-normal">koszty</span></div>
+                </div>
+                <div className="rounded-xl border border-purple-200 bg-purple-50 p-3">
+                  <div className="text-slate-500">Najbliższe podatki</div>
+                  {nextTax.length === 0 && <div className="font-bold text-slate-800">brak</div>}
+                  {nextTax.map((p, i) => (
+                    <div key={i} className="font-bold text-purple-900">{p.kind} {formatPLN(p.amount)} <span className="font-normal text-slate-500">do {formatShortDate(p.date)}</span></div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {tiles.map(([id, Icon, t, sub, cls]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => (id === 'look' ? (onClose(), onOpenReports()) : setStep(id))}
+                    className={`flex items-center gap-3 text-left rounded-xl border p-3.5 hover:shadow-md transition cursor-pointer ${cls}`}
+                  >
+                    <Icon className="w-6 h-6 shrink-0" />
+                    <div>
+                      <div className="text-sm font-bold">{t}</div>
+                      <div className="text-xs opacity-75">{sub}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {step === 'pay' && (
+            <>
+              <input type="search" autoFocus placeholder="Szukaj klienta…" value={paySearch} onChange={(e) => setPaySearch(e.target.value)} className={field} />
+              <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[45vh] overflow-y-auto">
+                {payList.length === 0 && <div className="p-4 text-sm text-slate-500">Brak nieopłaconych rat.</div>}
+                {payList.map(({ c, i }) => {
+                  const k = `${c.id}|${i.id}`;
+                  const late = i.dueDate && i.dueDate < today;
+                  return (
+                    <label key={k} className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50 ${paySel[k] ? 'bg-emerald-50' : ''}`}>
+                      <input type="checkbox" checked={!!paySel[k]} onChange={(e) => setPaySel({ ...paySel, [k]: e.target.checked })} className="w-4 h-4" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-slate-900 truncate">{c.clientName}</div>
+                        <div className="text-xs text-slate-500">{c.serviceName} • {i.label}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold">{formatPLN(i.amount)}</div>
+                        <div className={`text-[11px] ${late ? 'text-rose-700 font-semibold' : 'text-slate-500'}`}>{late ? 'po terminie ' : 'termin '}{formatShortDate(i.dueDate)}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {step === 'contract' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className={label}>Klient *</label>
+                <input list="bbd-assist-clients" autoFocus value={nc.client} onChange={(e) => setNc({ ...nc, client: e.target.value })} placeholder="Nazwa firmy lub imię i nazwisko" className={field} />
+                <datalist id="bbd-assist-clients">{clientNames.map((c) => <option key={c} value={c} />)}</datalist>
+              </div>
+              <div>
+                <label className={label}>Usługa</label>
+                <select value={nc.service} onChange={(e) => pickService(e.target.value)} className={field}>
+                  {services.map((s) => <option key={s.id || s.name} value={s.name}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={label}>Wartość netto (zł)</label>
+                <input type="number" min="0" value={nc.net} onChange={(e) => setNc({ ...nc, net: e.target.value })} className={`${field} font-bold`} />
+              </div>
+              <div>
+                <label className={label}>Start</label>
+                <input type="date" value={nc.start} onChange={(e) => setNc({ ...nc, start: e.target.value })} className={field} />
+              </div>
+              <div>
+                <label className={label}>Czas trwania (dni) → koniec {formatFullDate(ncEnd)}</label>
+                <input type="number" min="1" value={nc.days} onChange={(e) => setNc({ ...nc, days: e.target.value })} className={field} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={label}>Płatność klienta (brutto {formatPLN(ncGross)})</label>
+                <div className="flex flex-wrap gap-2">
+                  {[['full', '100% z góry'], ['half', '50% / 50%'], ['403030', '40 / 30 / 30'], ['monthly', 'Co miesiąc']].map(([v, t]) => (
+                    <button key={v} type="button" onClick={() => setNc({ ...nc, plan: v })} className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${nc.plan === v ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-slate-300 text-slate-700'}`}>{t}</button>
+                  ))}
+                </div>
+                <div className="mt-2 text-xs text-slate-600 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
+                  {ncInst.map((i) => <div key={i.id} className="flex justify-between"><span>{i.label} • {formatFullDate(i.dueDate)}</span><b>{formatPLN(i.amount)}</b></div>)}
+                </div>
+              </div>
+              <div>
+                <label className={label}>Podwykonawca (opcjonalnie)</label>
+                <input value={nc.subName} onChange={(e) => setNc({ ...nc, subName: e.target.value })} placeholder="Imię lub rola" className={field} />
+              </div>
+              <div>
+                <label className={label}>Koszt podwykonawcy netto (zł)</label>
+                <input type="number" min="0" value={nc.subCost} onChange={(e) => setNc({ ...nc, subCost: e.target.value })} className={field} />
+              </div>
+              <div>
+                <label className={label}>Status</label>
+                <select value={nc.status} onChange={(e) => setNc({ ...nc, status: e.target.value })} className={field}>
+                  {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={label}>VAT na fakturze podwykonawcy</label>
+                <select value={nc.subVat} onChange={(e) => setNc({ ...nc, subVat: Number(e.target.value) })} className={field}>
+                  {VAT_COST_OPTIONS.map((r) => <option key={r} value={r}>{r === 0 ? 'bez VAT / zw.' : `${r}%`}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {step === 'cost' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className={label}>Za co? *</label>
+                <input autoFocus value={kc.name} onChange={(e) => setKc({ ...kc, name: e.target.value })} placeholder="np. Księgowość, Reklama Facebook, Paliwo" className={field} />
+              </div>
+              <div>
+                <label className={label}>Kwota (zł)</label>
+                <div className="flex gap-1.5">
+                  <input type="number" min="0" step="0.01" value={kc.amount} onChange={(e) => setKc({ ...kc, amount: e.target.value })} className={`${field} font-bold`} />
+                  <select value={kc.mode} onChange={(e) => setKc({ ...kc, mode: e.target.value })} className="px-2 rounded-xl border border-slate-300 text-sm">
+                    <option value="gross">brutto</option>
+                    <option value="net">netto</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className={label}>VAT na fakturze</label>
+                <select value={kc.vat} onChange={(e) => setKc({ ...kc, vat: Number(e.target.value) })} className={field}>
+                  {COST_VAT_OPTIONS.map((r) => <option key={r} value={r}>{r === 0 ? 'bez VAT / zw.' : `${r}%`}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={label}>Data płatności</label>
+                <input type="date" value={kc.date} onChange={(e) => setKc({ ...kc, date: e.target.value })} className={field} />
+              </div>
+              <div>
+                <label className={label}>Dotyczy</label>
+                <div className="flex gap-1.5">
+                  {[['firm', 'Całej firmy'], ['contract', 'Klienta']].map(([v, t]) => (
+                    <button key={v} type="button" onClick={() => setKc({ ...kc, target: v })} className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border cursor-pointer ${kc.target === v ? 'bg-orange-600 text-white border-orange-600' : 'bg-white border-slate-300 text-slate-700'}`}>{t}</button>
+                  ))}
+                </div>
+              </div>
+              {kc.target === 'firm' ? (
+                <>
+                  <div>
+                    <label className={label}>Kategoria</label>
+                    <select value={kc.category} onChange={(e) => setKc({ ...kc, category: e.target.value })} className={field}>
+                      {COST_CATEGORIES.filter((c) => !isZusCategory(c)).map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={label}>Produkt (opcjonalnie)</label>
+                    <select value={kc.product} onChange={(e) => setKc({ ...kc, product: e.target.value })} className={field}>
+                      <option value="">Cała firma (wspólny)</option>
+                      {services.map((s) => <option key={s.id || s.name} value={s.name}>{s.name}</option>)}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <div className="sm:col-span-2">
+                  <label className={label}>Umowa klienta</label>
+                  <select value={kc.contractId} onChange={(e) => setKc({ ...kc, contractId: e.target.value })} className={field}>
+                    <option value="">— wybierz —</option>
+                    {[...contracts].sort((a, b) => a.clientName.localeCompare(b.clientName, 'pl')).map((c) => <option key={c.id} value={c.id}>{c.clientName} — {c.serviceName} ({formatShortDate(c.startDate)})</option>)}
+                  </select>
+                </div>
+              )}
+              <label className="sm:col-span-2 flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={kc.paid} onChange={(e) => setKc({ ...kc, paid: e.target.checked })} /> Już zapłacone
+              </label>
+              <div className="sm:col-span-2 text-xs bg-orange-50 border border-orange-200 rounded-lg p-2.5">
+                Netto <b>{formatPLN(kcNet)}</b> • VAT do odliczenia <b>{formatPLN(kcVat)}</b> • brutto <b>{formatPLN(kcNet + kcVat)}</b>
+              </div>
+            </div>
+          )}
+
+          {step === 'sub' && (
+            <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[50vh] overflow-y-auto">
+              {unpaidSubs.length === 0 && <div className="p-4 text-sm text-slate-500">Wszyscy podwykonawcy są opłaceni.</div>}
+              {[...unpaidSubs].sort((a, b) => String(a.subDueDate).localeCompare(String(b.subDueDate))).map((c) => {
+                const f = calculateContractFinancials(c, settings);
+                return (
+                  <label key={c.id} className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50 ${subSel[c.id] ? 'bg-rose-50' : ''}`}>
+                    <input type="checkbox" checked={!!subSel[c.id]} onChange={(e) => setSubSel({ ...subSel, [c.id]: e.target.checked })} className="w-4 h-4" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{c.subcontractorName || 'Podwykonawca'}</div>
+                      <div className="text-xs text-slate-500">{c.clientName} • {c.serviceName}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold">{formatPLN(f.subGross)}</div>
+                      <div className="text-[11px] text-slate-500">termin {formatShortDate(c.subDueDate)}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {step === 'zus' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2 text-xs text-slate-600">Składki za <b>{prevMonth}</b>. Kwoty podpowiadam z poprzedniego miesiąca.</div>
+              <div>
+                <label className={label}>ZUS społeczny (zł)</label>
+                <input type="number" min="0" step="0.01" autoFocus value={zus.social} onChange={(e) => setZus({ ...zus, social: e.target.value })} className={`${field} font-bold`} />
+              </div>
+              <div>
+                <label className={label}>Składka zdrowotna (zł)</label>
+                <input type="number" min="0" step="0.01" value={zus.health} onChange={(e) => setZus({ ...zus, health: e.target.value })} className={`${field} font-bold`} />
+              </div>
+              <div>
+                <label className={label}>Data zapłaty</label>
+                <input type="date" value={zus.date} onChange={(e) => setZus({ ...zus, date: e.target.value })} className={field} />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700 pt-5">
+                <input type="checkbox" checked={zus.paid} onChange={(e) => setZus({ ...zus, paid: e.target.checked })} /> Już zapłacone
+              </label>
+            </div>
+          )}
+
+          {step === 'done' && done && (
+            <div className="text-center py-4 space-y-3">
+              <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <Check className="w-8 h-8" />
+              </div>
+              <div className="text-lg font-bold text-slate-900">{done.title}</div>
+              <div className="text-sm text-slate-600 space-y-1">{done.lines.map((l, i) => <div key={i}>{l}</div>)}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          {step === 'home' ? (
+            <label className="flex items-center gap-2 text-xs text-slate-500">
+              <input type="checkbox" checked={hideAuto} onChange={(e) => toggleAuto(e.target.checked)} /> Nie pokazuj automatycznie po zalogowaniu
+            </label>
+          ) : (
+            <button type="button" onClick={() => setStep('home')} className={ghost}>← Wróć</button>
+          )}
+          <div className="flex gap-2">
+            {step === 'home' && <button type="button" onClick={onClose} className={ghost}>Przejdź do aplikacji</button>}
+            {step === 'done' && (
+              <>
+                <button type="button" onClick={onClose} className={ghost}>Zamknij</button>
+                <button type="button" onClick={() => setStep('home')} className={primary}>Coś jeszcze?</button>
+              </>
+            )}
+            {step === 'pay' && <button type="button" disabled={!Object.values(paySel).some(Boolean)} onClick={savePayments} className={primary}>Zapisz wpłaty</button>}
+            {step === 'contract' && <button type="button" disabled={!nc.client.trim() || !(Number(nc.net) > 0)} onClick={saveContract} className={primary}>Dodaj umowę</button>}
+            {step === 'cost' && <button type="button" disabled={!kc.name.trim() || kcNet <= 0 || (kc.target === 'contract' && !kc.contractId)} onClick={saveCost} className={primary}>Zapisz koszt</button>}
+            {step === 'sub' && <button type="button" disabled={!Object.values(subSel).some(Boolean)} onClick={saveSubs} className={primary}>Zapisz wypłaty</button>}
+            {step === 'zus' && <button type="button" disabled={!(Number(zus.social) || Number(zus.health))} onClick={saveZus} className={primary}>Zapisz ZUS</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App({ contracts, costs, settings, store, workspaceName, userEmail, onOpenTeam, onLogout }) {
   const setContracts = (updater) => {
     const next = typeof updater === 'function' ? updater(contracts) : updater;
@@ -4534,6 +5050,17 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
   const [editingCost, setEditingCost] = useState(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  // Asystent dnia otwiera się sam raz dziennie (chyba że wyłączony)
+  useEffect(() => {
+    try {
+      const today = toISODate(new Date());
+      if (localStorage.getItem('bbd-assistant-off') === '1') return;
+      if (localStorage.getItem('bbd-assistant-last') === today) return;
+      localStorage.setItem('bbd-assistant-last', today);
+    } catch {}
+    setAssistantOpen(true);
+  }, []);
   const [toastMessage, setToastMessage] = useState('');
 
   const showToast = (msg) => {
@@ -4775,6 +5302,16 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
 
             <button
               type="button"
+              onClick={() => setAssistantOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
+              title="Asystent dnia: szybkie wprowadzanie wpłat, umów, kosztów i ZUS"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="hidden sm:inline">Asystent</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setPrintOpen(true)}
               className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
               title="Formularze do druku: raport podatkowy, umowy, koszty, karta umowy"
@@ -4845,6 +5382,20 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
       </header>
 
       {/* Powiadomienie Toast */}
+      {assistantOpen && (
+        <DailyAssistant
+          contracts={contracts}
+          costs={costs}
+          settings={settings}
+          userEmail={userEmail}
+          onClose={() => setAssistantOpen(false)}
+          onOpenReports={() => setPrintOpen(true)}
+          onSaveContract={(c) => setContracts((prev) => (prev.some((x) => x.id === c.id) ? prev.map((x) => (x.id === c.id ? c : x)) : [c, ...prev]))}
+          onSaveContracts={(list) => setContracts((prev) => prev.map((x) => list.find((c) => c.id === x.id) || x))}
+          onSaveCost={(c) => store.saveCost(c)}
+        />
+      )}
+
       {printOpen && (
         <PrintView
           onClose={() => setPrintOpen(false)}
