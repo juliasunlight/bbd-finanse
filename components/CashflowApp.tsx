@@ -754,346 +754,664 @@ const pCell = 'border border-slate-400 px-1.5 py-1 align-top';
 const pHead = `${pCell} bg-slate-100 font-bold text-left`;
 const pNum = `${pCell} text-right whitespace-nowrap`;
 
+// ----------------------------------------------------------------------------
+// Dane do raportów: wszystkie dokumenty sprzedaży i kosztów w jednym miejscu
+// ----------------------------------------------------------------------------
+function buildDocuments(contracts, costs, settings) {
+  const r = Number(settings.vatRate) || 0;
+  const sales = [];
+  const expenses = [];
+  (contracts || []).forEach((ctr) => {
+    (ctr.installments || []).forEach((i) => {
+      const gross = Number(i.amount) || 0;
+      const vat = r > 0 ? (gross * r) / (100 + r) : 0;
+      sales.push({ date: i.dueDate || '', client: ctr.clientName, service: ctr.serviceName, status: ctr.status, contractId: ctr.id, label: i.label || 'rata', gross, net: gross - vat, vat, paid: !!i.paid });
+    });
+    const c = calculateContractFinancials(ctr, settings);
+    if (c.effectiveSubCost > 0) {
+      expenses.push({ date: ctr.subDueDate || ctr.endDate || '', kind: 'Podwykonawca', category: 'Podwykonawcy', name: ctr.subcontractorName || 'Podwykonawca', client: ctr.clientName, service: ctr.serviceName, status: ctr.status, net: c.effectiveSubCost, vat: c.subVat, gross: c.subGross, paid: ctr.subStatus === 'Zapłacono' });
+    }
+    (Array.isArray(ctr.costs) ? ctr.costs : []).forEach((k) => {
+      const net = Math.max(0, Number(k.net) || 0);
+      const vat = Math.round(net * ((Number(k.vatRate) || 0) / 100));
+      expenses.push({ date: k.dueDate || ctr.endDate || '', kind: 'Koszt projektu', category: 'Koszty projektów', name: k.name || 'Koszt projektu', client: ctr.clientName, service: ctr.serviceName, status: ctr.status, net, vat, gross: net + vat, paid: !!k.paid });
+    });
+  });
+  (costs || []).forEach((k) => {
+    const cc = calculateCostFinancials(k, settings);
+    const zus = isZusCategory(k.category);
+    expenses.push({ date: k.date || '', kind: zus ? 'ZUS' : 'Koszt firmy', category: k.category || 'Inne', name: k.name || 'Koszt', client: '', service: k.serviceName || '', status: '', net: cc.net, vat: cc.vat, gross: cc.gross, paid: !!k.paid });
+  });
+  return { sales, expenses };
+}
+
+function toCSV(report) {
+  const esc = (v) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const num = (v) => (typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : v);
+  const lines = [report.columns.map((c) => esc(c.label)).join(';')];
+  report.rows.forEach((row) => lines.push(row.map((v) => esc(num(v))).join(';')));
+  if (report.foot) lines.push(report.foot.map((v) => esc(num(v))).join(';'));
+  return '﻿' + lines.join('\n');
+}
+
+function downloadCSV(report) {
+  const blob = new Blob([toCSV(report)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${report.file || 'raport'}_${toISODate(new Date())}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function ReportTable({ report }) {
+  const fmt = (v, col) => (col.num ? (typeof v === 'number' ? (col.pct ? `${v.toFixed(1)}%` : col.int ? String(v) : formatPLN(v)) : v || '—') : col.date ? formatFullDate(v) : v === '' || v === undefined || v === null ? '—' : v);
+  return (
+    <table className="w-full border-collapse">
+      <thead>
+        <tr>{report.columns.map((c, i) => <th key={i} className={pHead}>{c.label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {report.rows.length === 0 && <tr><td className={pCell} colSpan={report.columns.length}>Brak danych dla wybranych filtrów.</td></tr>}
+        {report.rows.map((row, ri) => (
+          <tr key={ri} className={report.highlight && report.highlight(ri) ? 'bg-rose-50' : ''}>
+            {row.map((v, ci) => (
+              <td key={ci} className={report.columns[ci].num ? pNum : `${pCell}${report.columns[ci].date ? ' whitespace-nowrap' : ''}`}>{fmt(v, report.columns[ci])}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+      {report.foot && (
+        <tfoot>
+          <tr className="bg-slate-100 font-bold">
+            {report.foot.map((v, ci) => <td key={ci} className={report.columns[ci].num ? pNum : pCell}>{report.columns[ci].num && typeof v === 'number' ? fmt(v, report.columns[ci]) : v}</td>)}
+          </tr>
+        </tfoot>
+      )}
+    </table>
+  );
+}
+
+const REPORT_GROUPS = [
+  ['Klienci', [
+    ['clients', 'Zestawienie klientów'],
+    ['clientCards', 'Karty klientów'],
+    ['contractCards', 'Karty umów'],
+    ['receivables', 'Należności (niezapłacone raty)']
+  ]],
+  ['Przychody', [
+    ['sales', 'Rejestr sprzedaży (raty)'],
+    ['services', 'Przychody i wynik wg usług']
+  ]],
+  ['Wydatki', [
+    ['expenses', 'Rejestr kosztów'],
+    ['categories', 'Koszty wg kategorii'],
+    ['payables', 'Zobowiązania (niezapłacone koszty)']
+  ]],
+  ['Wynik i podatki', [
+    ['pnl', 'Rachunek wyników miesięczny'],
+    ['cash', 'Cash flow miesięczny'],
+    ['tax', 'Raport podatkowy']
+  ]]
+];
+
+function ContractCard({ contract, settings, Header }) {
+  const c = calculateContractFinancials(contract, settings);
+  return (
+    <>
+      <Header title={`Karta umowy: ${contract.clientName}`} />
+      <table className="w-full border-collapse mb-3">
+        <tbody>
+          <tr><td className={pHead}>Klient</td><td className={pCell}>{contract.clientName}</td><td className={pHead}>Usługa</td><td className={pCell}>{contract.serviceName}</td></tr>
+          <tr><td className={pHead}>Okres</td><td className={pCell}>{formatFullDate(contract.startDate)} – {formatFullDate(contract.endDate)} ({c.durationDays} dni)</td><td className={pHead}>Status</td><td className={pCell}>{contract.status}</td></tr>
+          <tr><td className={pHead}>Wartość netto</td><td className={pNum}>{formatPLN(c.netValue)}</td><td className={pHead}>VAT {settings.vatRate}%</td><td className={pNum}>{formatPLN(c.vatAmount)}</td></tr>
+          <tr><td className={pHead}>Wartość brutto</td><td className={pNum}>{formatPLN(c.grossValue)}</td><td className={pHead}>Wpłacono / pozostało</td><td className={pNum}>{formatPLN(c.paidGross)} / {formatPLN(c.remainingGross)}</td></tr>
+        </tbody>
+      </table>
+      <div className="font-bold mb-1">Harmonogram rat klienta</div>
+      <table className="w-full border-collapse mb-3">
+        <thead><tr><th className={pHead}>Rata</th><th className={pHead}>Termin (data faktury)</th><th className={pHead}>Kwota brutto</th><th className={pHead}>w tym VAT</th><th className={pHead}>VAT płatny do</th><th className={pHead}>Status</th></tr></thead>
+        <tbody>
+          {(contract.installments || []).map((i) => {
+            const r = Number(settings.vatRate) || 0;
+            const vat = r > 0 ? ((Number(i.amount) || 0) * r) / (100 + r) : 0;
+            const cfg = taxConfig(settings);
+            const mk = i.dueDate ? monthKey(i.dueDate) : '';
+            let endKey = mk;
+            if (mk && cfg.vatPeriod === 'quarter') while (Number(endKey.slice(5, 7)) % 3 !== 0) endKey = addMonthKey(endKey, 1);
+            return (
+              <tr key={i.id}>
+                <td className={pCell}>{i.label}</td>
+                <td className={pCell}>{formatFullDate(i.dueDate)}</td>
+                <td className={pNum}>{formatPLN(i.amount)}</td>
+                <td className={pNum}>{formatPLN(vat)}</td>
+                <td className={pCell}>{mk ? formatFullDate(nextMonthDay(endKey, 25)) : '—'}</td>
+                <td className={pCell}>{i.paid ? 'opłacona' : 'oczekuje'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="font-bold mb-1">Koszty umowy</div>
+      <table className="w-full border-collapse mb-3">
+        <thead><tr><th className={pHead}>Pozycja</th><th className={pHead}>Termin</th><th className={pHead}>Netto</th><th className={pHead}>VAT</th><th className={pHead}>Brutto</th><th className={pHead}>Status</th></tr></thead>
+        <tbody>
+          {c.effectiveSubCost > 0 && (
+            <tr>
+              <td className={pCell}>Podwykonawca: {contract.subcontractorName || '—'}</td>
+              <td className={pCell}>{formatFullDate(contract.subDueDate)}</td>
+              <td className={pNum}>{formatPLN(c.effectiveSubCost)}</td>
+              <td className={pNum}>{formatPLN(c.subVat)}</td>
+              <td className={pNum}>{formatPLN(c.subGross)}</td>
+              <td className={pCell}>{contract.subStatus}</td>
+            </tr>
+          )}
+          {(contract.costs || []).map((k) => {
+            const net = Math.max(0, Number(k.net) || 0);
+            const vat = Math.round(net * ((Number(k.vatRate) || 0) / 100));
+            return (
+              <tr key={k.id}>
+                <td className={pCell}>{k.name || 'Koszt'}</td>
+                <td className={pCell}>{formatFullDate(k.dueDate)}</td>
+                <td className={pNum}>{formatPLN(net)}</td>
+                <td className={pNum}>{formatPLN(vat)}</td>
+                <td className={pNum}>{formatPLN(net + vat)}</td>
+                <td className={pCell}>{k.paid ? 'zapłacono' : 'do zapłaty'}</td>
+              </tr>
+            );
+          })}
+          {c.totalCostsNet === 0 && <tr><td className={pCell} colSpan={6}>Brak kosztów.</td></tr>}
+        </tbody>
+      </table>
+      <div className="font-bold mb-1">Wynik umowy (szacunek)</div>
+      <table className="w-full border-collapse">
+        <tbody>
+          <tr><td className={pHead}>VAT należny</td><td className={pNum}>{formatPLN(c.vatAmount)}</td><td className={pHead}>VAT naliczony z kosztów</td><td className={pNum}>{formatPLN(c.inputVat)}</td></tr>
+          <tr><td className={pHead}>VAT do zapłaty</td><td className={pNum}>{formatPLN(Math.max(0, c.vatPayable))}</td><td className={pHead}>PIT/CIT (szac. {settings.pitRate}%)</td><td className={pNum}>{formatPLN(c.pitAmount)}</td></tr>
+          <tr><td className={pHead}>Koszty netto razem</td><td className={pNum}>{formatPLN(c.totalCostsNet)}</td><td className={pHead}>Zysk netto po podatkach</td><td className={`${pNum} font-bold`}>{formatPLN(c.netProfit)} ({c.netMargin.toFixed(1)}%)</td></tr>
+        </tbody>
+      </table>
+      {contract.notes && <p className="mt-2"><b>Notatki:</b> {contract.notes}</p>}
+    </>
+  );
+}
+
 function PrintView({ onClose, contracts, costs, settings, workspaceName }) {
-  const [form, setForm] = useState('tax');
-  const [contractId, setContractId] = useState(contracts[0]?.id || '');
-  const [year, setYear] = useState('all');
+  const [form, setForm] = useState('clients');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [service, setService] = useState('');
+  const [status, setStatus] = useState('');
+  const [client, setClient] = useState('');
+  const [cardClient, setCardClient] = useState('');
 
+  useEffect(() => {
+    document.body.classList.add('bbd-printing');
+    return () => document.body.classList.remove('bbd-printing');
+  }, []);
+
+  const today = toISODate(new Date());
+  const inPeriod = (d) => (!from || (d && d >= from)) && (!to || (d && d <= to));
+  const q = client.trim().toLowerCase();
+  const contractOk = (ctr) =>
+    (!service || ctr.serviceName === service) &&
+    (!status || ctr.status === status) &&
+    (!q || (ctr.clientName || '').toLowerCase().includes(q));
+  const overlaps = (ctr) =>
+    (!from || (ctr.endDate || ctr.startDate || '') >= from || (ctr.installments || []).some((i) => i.dueDate >= from)) &&
+    (!to || (ctr.startDate || '') <= to);
+
+  const fContracts = useMemo(
+    () => contracts.filter((c) => contractOk(c) && overlaps(c)).sort((a, b) => (a.clientName || '').localeCompare(b.clientName || '', 'pl')),
+    [contracts, from, to, service, status, client]
+  );
+  const docs = useMemo(() => buildDocuments(contracts, costs, settings), [contracts, costs, settings]);
+  const docOk = (d) =>
+    inPeriod(d.date) &&
+    (!service || d.service === service) &&
+    (!status || !d.status || d.status === status) &&
+    (!q || (d.client || '').toLowerCase().includes(q) || (!d.client && (d.name || '').toLowerCase().includes(q)));
+  const sales = docs.sales.filter(docOk).sort((a, b) => a.date.localeCompare(b.date));
+  const expenses = docs.expenses.filter(docOk).sort((a, b) => a.date.localeCompare(b.date));
+
+  // Podatki i miesiące liczone dla całej firmy (podatek dotyczy firmy, nie pojedynczego klienta)
   const schedule = useMemo(() => buildTaxSchedule(contracts, costs, settings), [contracts, costs, settings]);
-  const years = Array.from(new Set(schedule.months.map((m) => m.key.slice(0, 4))));
-  const months = year === 'all' ? schedule.months : schedule.months.filter((m) => m.key.startsWith(year));
+  const monthOk = (key) => (!from || key >= from.slice(0, 7)) && (!to || key <= to.slice(0, 7));
   const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
-  const today = formatFullDate(toISODate(new Date()));
-  const contract = contracts.find((c) => c.id === contractId);
+  const serviceNames = Array.from(new Set([...(settings.services || []).map((s) => s.name), ...contracts.map((c) => c.serviceName)].filter(Boolean)));
+  const clientNames = Array.from(new Set(contracts.map((c) => c.clientName).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pl'));
 
-  const Header = ({ title }) => (
+  const filtersText = [
+    from || to ? `okres ${from ? formatFullDate(from) : '…'} – ${to ? formatFullDate(to) : '…'}` : 'cały okres',
+    service && `usługa: ${service}`,
+    status && `status: ${status}`,
+    q && `klient: „${client.trim()}”`
+  ].filter(Boolean).join(' • ');
+
+  const Header = ({ title, sub }) => (
     <div className="flex items-start justify-between border-b-2 border-slate-800 pb-2 mb-3">
       <div>
         <div className="text-[10px] font-bold tracking-[0.2em] text-slate-500">JACEK SZELA • BIZNES BEZ DRAMATÓW</div>
         <h1 className="text-lg font-bold text-slate-900">{title}</h1>
-        <div className="text-xs text-slate-600">Firma: {workspaceName}</div>
+        <div className="text-xs text-slate-600">Firma: {workspaceName}{sub !== false ? ` • ${filtersText}` : ''}</div>
       </div>
       <div className="text-right text-[11px] text-slate-600">
-        Data wydruku: {today}
+        Data wydruku: {formatFullDate(today)}
         <br />
         VAT {settings.vatRate}% ({schedule.cfg.vatPeriod === 'quarter' ? 'kwartalnie' : 'miesięcznie'}) •{' '}
         {(TAX_FORMS.find((f) => f.id === schedule.cfg.taxForm) || {}).label}
-        {schedule.cfg.taxForm !== 'skala' ? ` ${schedule.cfg.pitRate}%` : ''}
       </div>
     </div>
   );
-
   const Signatures = () => (
-    <div className="grid grid-cols-2 gap-10 mt-10 text-[11px] text-slate-600">
+    <div className="grid grid-cols-2 gap-10 mt-10 text-[11px] text-slate-600 break-inside-avoid">
       <div className="border-t border-slate-500 pt-1 text-center">Sporządził(a)</div>
       <div className="border-t border-slate-500 pt-1 text-center">Zatwierdził(a)</div>
     </div>
   );
 
+  // ---------------- Raporty tabelaryczne ----------------
+  const report = useMemo(() => {
+    if (form === 'clients') {
+      const map = {};
+      fContracts.forEach((ctr) => {
+        const c = calculateContractFinancials(ctr, settings);
+        const k = ctr.clientName || '—';
+        if (!map[k]) map[k] = { n: 0, services: new Set(), net: 0, gross: 0, paid: 0, rem: 0, overdue: 0, costs: 0, profit: 0 };
+        const m = map[k];
+        m.n += 1; m.services.add(ctr.serviceName); m.net += c.netValue; m.gross += c.grossValue; m.paid += c.paidGross;
+        m.rem += c.remainingGross; m.costs += c.totalCostsNet; m.profit += c.netProfit;
+        m.overdue += (ctr.installments || []).filter((i) => !i.paid && i.dueDate && i.dueDate < today).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      });
+      const rows = Object.entries(map).sort((a, b) => b[1].net - a[1].net)
+        .map(([k, m]) => [k, m.n, Array.from(m.services).join(', '), m.net, m.gross, m.paid, m.rem, m.overdue, m.costs, m.profit, m.net ? (m.profit / m.net) * 100 : 0]);
+      const t = (i) => sum(rows, (r) => r[i]);
+      const tNet = t(3);
+      return {
+        title: 'Zestawienie klientów (zbiorcze)', file: 'zestawienie_klientow',
+        columns: [{ label: 'Klient' }, { label: 'Umów', num: true, int: true }, { label: 'Usługi' }, { label: 'Netto', num: true }, { label: 'Brutto', num: true }, { label: 'Wpłacono', num: true }, { label: 'Do zapłaty', num: true }, { label: 'w tym po terminie', num: true }, { label: 'Koszty netto', num: true }, { label: 'Zysk netto (szac.)', num: true }, { label: 'Marża', num: true, pct: true }],
+        rows,
+        foot: [`Razem: ${rows.length} klientów`, t(1), '', tNet, t(4), t(5), t(6), t(7), t(8), t(9), tNet ? (t(9) / tNet) * 100 : 0],
+        highlight: (i) => rows[i][7] > 0
+      };
+    }
+    if (form === 'receivables') {
+      const list = docs.sales.filter((s) => !s.paid && docOk(s)).sort((a, b) => a.date.localeCompare(b.date));
+      const rows = list.map((s) => {
+        const days = s.date && s.date < today ? Math.round((parseDate(today) - parseDate(s.date)) / 86400000) : 0;
+        return [s.client, s.service, s.label, s.date, s.gross, days ? days : 'w terminie'];
+      });
+      return {
+        title: 'Należności — niezapłacone raty klientów', file: 'naleznosci',
+        columns: [{ label: 'Klient' }, { label: 'Usługa' }, { label: 'Rata' }, { label: 'Termin', date: true }, { label: 'Kwota brutto', num: true }, { label: 'Dni po terminie', num: true, int: true }],
+        rows,
+        foot: [`Razem: ${rows.length}`, '', '', '', sum(rows, (r) => r[4]), `po terminie: ${formatPLN(sum(rows.filter((r) => typeof r[5] === 'number'), (r) => r[4]))}`],
+        highlight: (i) => typeof rows[i][5] === 'number'
+      };
+    }
+    if (form === 'sales') {
+      const rows = sales.map((s) => [s.date, s.client, s.service, s.label, s.net, s.vat, s.gross, s.paid ? 'opłacona' : s.date < today ? 'po terminie' : 'oczekuje']);
+      return {
+        title: 'Rejestr sprzedaży (raty klientów)', file: 'rejestr_sprzedazy',
+        columns: [{ label: 'Data', date: true }, { label: 'Klient' }, { label: 'Usługa' }, { label: 'Rata' }, { label: 'Netto', num: true }, { label: 'VAT', num: true }, { label: 'Brutto', num: true }, { label: 'Status' }],
+        rows,
+        foot: [`Razem: ${rows.length}`, '', '', '', sum(rows, (r) => r[4]), sum(rows, (r) => r[5]), sum(rows, (r) => r[6]), `opłacono: ${formatPLN(sum(sales.filter((s) => s.paid), (s) => s.gross))}`]
+      };
+    }
+    if (form === 'services') {
+      const map = {};
+      const get = (k) => (map[k] = map[k] || { contracts: 0, clients: new Set(), net: 0, ctrCosts: 0, firmCosts: 0, pit: 0 });
+      fContracts.forEach((ctr) => {
+        const c = calculateContractFinancials(ctr, settings);
+        const m = get(ctr.serviceName || '—');
+        m.contracts += 1; m.clients.add(ctr.clientName); m.net += c.netValue; m.ctrCosts += c.totalCostsNet; m.pit += c.pitAmount;
+      });
+      expenses.filter((e) => e.kind !== 'Podwykonawca' && e.kind !== 'Koszt projektu').forEach((e) => {
+        get(e.service || 'Koszty wspólne firmy').firmCosts += e.net;
+      });
+      const rows = Object.entries(map).sort((a, b) => b[1].net - a[1].net).map(([k, m]) => {
+        const profit = m.net - m.ctrCosts - m.firmCosts - m.pit;
+        return [k, m.contracts, m.clients.size, m.net, m.ctrCosts, m.firmCosts, m.pit, profit, m.net ? (profit / m.net) * 100 : 0];
+      });
+      const t = (i) => sum(rows, (r) => r[i]);
+      return {
+        title: 'Przychody i wynik wg usług', file: 'wynik_wg_uslug',
+        columns: [{ label: 'Usługa / produkt' }, { label: 'Umów', num: true, int: true }, { label: 'Klientów', num: true, int: true }, { label: 'Przychód netto', num: true }, { label: 'Koszty umów', num: true }, { label: 'Koszty firmy przypisane', num: true }, { label: 'PIT/CIT (szac.)', num: true }, { label: 'Zysk netto', num: true }, { label: 'Marża', num: true, pct: true }],
+        rows,
+        foot: ['Razem', t(1), '', t(3), t(4), t(5), t(6), t(7), t(3) ? (t(7) / t(3)) * 100 : 0]
+      };
+    }
+    if (form === 'expenses') {
+      const rows = expenses.map((e) => [e.date, e.kind, e.category, e.name, e.client || e.service || 'firma', e.net, e.vat, e.gross, e.paid ? 'zapłacono' : 'do zapłaty']);
+      return {
+        title: 'Rejestr kosztów (podwykonawcy, koszty projektów, koszty firmy, ZUS)', file: 'rejestr_kosztow',
+        columns: [{ label: 'Data', date: true }, { label: 'Rodzaj' }, { label: 'Kategoria' }, { label: 'Nazwa' }, { label: 'Klient / produkt' }, { label: 'Netto', num: true }, { label: 'VAT', num: true }, { label: 'Brutto', num: true }, { label: 'Status' }],
+        rows,
+        foot: [`Razem: ${rows.length}`, '', '', '', '', sum(rows, (r) => r[5]), sum(rows, (r) => r[6]), sum(rows, (r) => r[7]), '']
+      };
+    }
+    if (form === 'categories') {
+      const map = {};
+      expenses.forEach((e) => {
+        const k = `${e.kind}|${e.category}`;
+        map[k] = map[k] || { kind: e.kind, category: e.category, n: 0, net: 0, vat: 0, gross: 0, unpaid: 0 };
+        const m = map[k];
+        m.n += 1; m.net += e.net; m.vat += e.vat; m.gross += e.gross; if (!e.paid) m.unpaid += e.gross;
+      });
+      const total = sum(Object.values(map), (m) => m.net);
+      const rows = Object.values(map).sort((a, b) => b.net - a.net).map((m) => [m.kind, m.category, m.n, m.net, m.vat, m.gross, m.unpaid, total ? (m.net / total) * 100 : 0]);
+      return {
+        title: 'Koszty wg rodzaju i kategorii', file: 'koszty_wg_kategorii',
+        columns: [{ label: 'Rodzaj' }, { label: 'Kategoria' }, { label: 'Pozycji', num: true, int: true }, { label: 'Netto', num: true }, { label: 'VAT', num: true }, { label: 'Brutto', num: true }, { label: 'Do zapłaty', num: true }, { label: 'Udział', num: true, pct: true }],
+        rows,
+        foot: ['Razem', '', sum(rows, (r) => r[2]), sum(rows, (r) => r[3]), sum(rows, (r) => r[4]), sum(rows, (r) => r[5]), sum(rows, (r) => r[6]), 100]
+      };
+    }
+    if (form === 'payables') {
+      const list = docs.expenses.filter((e) => !e.paid && docOk(e)).sort((a, b) => a.date.localeCompare(b.date));
+      const rows = list.map((e) => [e.date, e.kind, e.name, e.client || e.service || 'firma', e.gross, e.date && e.date < today ? 'po terminie' : 'w terminie']);
+      return {
+        title: 'Zobowiązania — niezapłacone koszty', file: 'zobowiazania',
+        columns: [{ label: 'Termin', date: true }, { label: 'Rodzaj' }, { label: 'Nazwa' }, { label: 'Klient / produkt' }, { label: 'Brutto', num: true }, { label: 'Status' }],
+        rows,
+        foot: [`Razem: ${rows.length}`, '', '', '', sum(rows, (r) => r[4]), ''],
+        highlight: (i) => rows[i][5] === 'po terminie'
+      };
+    }
+    if (form === 'pnl' || form === 'cash') {
+      const months = {};
+      const get = (key) => (months[key] = months[key] || { key, rev: 0, ctrCosts: 0, firm: 0, zus: 0, pit: 0, vat: 0, inflow: 0, outflow: 0 });
+      sales.forEach((s) => { const m = get(s.date.slice(0, 7)); m.rev += s.net; m.inflow += s.gross; });
+      expenses.forEach((e) => {
+        const m = get(e.date.slice(0, 7));
+        if (e.kind === 'ZUS') m.zus += e.net; else if (e.kind === 'Koszt firmy') m.firm += e.net; else m.ctrCosts += e.net;
+        m.outflow += e.gross;
+      });
+      const whole = !service && !status && !q;
+      if (whole) {
+        // Cash flow: podatki w miesiącu zapłaty; rachunek wyników: zaliczka w okresie, którego dotyczy
+        schedule.payments.forEach((p) => {
+          if (!inPeriod(p.date)) return;
+          const m = get(p.date.slice(0, 7));
+          if (p.kind === 'VAT') m.vat += p.amount; else m.pitPaid = (m.pitPaid || 0) + p.amount;
+        });
+        schedule.months.forEach((sm) => {
+          if (sm.pitAdvance > 0) get(sm.key).pit += sm.pitAdvance;
+        });
+      }
+      const list = Object.values(months).filter((m) => m.key && monthOk(m.key)).sort((a, b) => a.key.localeCompare(b.key));
+      if (form === 'pnl') {
+        const rows = list.map((m) => {
+          const profit = m.rev - m.ctrCosts - m.firm - m.zus - m.pit;
+          return [monthLabel(m.key), m.rev, m.ctrCosts, m.firm, m.zus, m.pit, profit, m.rev ? (profit / m.rev) * 100 : 0];
+        });
+        const t = (i) => sum(rows, (r) => r[i]);
+        return {
+          title: 'Rachunek wyników miesięczny (netto)', file: 'rachunek_wynikow',
+          note: whole ? 'Zaliczka PIT/CIT w miesiącu (lub kwartale), którego dotyczy. Przychód w miesiącu raty (data faktury), koszty w miesiącu płatności.' : 'Przy filtrze usługi, statusu lub klienta podatki firmy nie są przypisywane (kolumna PIT/CIT = 0).',
+          columns: [{ label: 'Miesiąc' }, { label: 'Przychód netto', num: true }, { label: 'Podwykonawcy i koszty umów', num: true }, { label: 'Koszty firmy', num: true }, { label: 'ZUS', num: true }, { label: 'Zaliczki PIT/CIT', num: true }, { label: 'Zysk netto', num: true }, { label: 'Marża', num: true, pct: true }],
+          rows,
+          foot: ['Razem', t(1), t(2), t(3), t(4), t(5), t(6), t(1) ? (t(6) / t(1)) * 100 : 0]
+        };
+      }
+      const cash = buildCashEvents(contracts, costs, settings, schedule);
+      let bal = whole && cash.from ? null : 0;
+      const rows = list.map((m) => {
+        const net = m.inflow - m.outflow - m.vat - (m.pitPaid || 0);
+        let end = '';
+        if (whole && cash.from) {
+          const next = `${addMonthKey(m.key, 1)}-01`;
+          end = next > cash.from ? cashBefore(cash, next) : '';
+        } else {
+          bal += net;
+          end = bal;
+        }
+        return [monthLabel(m.key), m.inflow, m.outflow, m.vat, m.pitPaid || 0, net, end];
+      });
+      const t = (i) => sum(rows, (r) => r[i]);
+      return {
+        title: 'Cash flow miesięczny (brutto, z podatkami)', file: 'cash_flow',
+        note: whole && cash.from ? `Stan konta liczony od bilansu otwarcia ${formatFullDate(cash.from)} (${formatPLN(cash.openingCash)}).` : 'Saldo narastające od początku zestawienia (bez bilansu otwarcia lub przy filtrach).',
+        columns: [{ label: 'Miesiąc' }, { label: 'Wpływy brutto', num: true }, { label: 'Wydatki brutto', num: true }, { label: 'VAT', num: true }, { label: 'PIT/CIT', num: true }, { label: 'Saldo miesiąca', num: true }, { label: whole && cash.from ? 'Stan konta na koniec' : 'Saldo narastające', num: true }],
+        rows,
+        foot: ['Razem', t(1), t(2), t(3), t(4), t(5), '']
+      };
+    }
+    return null;
+  }, [form, from, to, service, status, client, contracts, costs, settings]);
+
+  const cardClients = cardClient ? [cardClient] : Array.from(new Set(fContracts.map((c) => c.clientName)));
+  const pages = form === 'clientCards' ? cardClients.length : form === 'contractCards' ? fContracts.length : 1;
+  const field = 'px-2 py-1.5 rounded-lg text-slate-900 bg-white text-xs';
+
   return (
     <div className="print-overlay fixed inset-0 z-[60] bg-slate-200/90 overflow-y-auto">
-      <div className="no-print sticky top-0 z-10 bg-[#1E293B] text-white px-4 py-3 flex flex-wrap items-center gap-2 justify-between">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-bold mr-1">Formularz do druku:</span>
-          {[
-            ['tax', 'Raport podatkowy'],
-            ['contracts', 'Umowy i harmonogram rat'],
-            ['costs', 'Koszty firmy'],
-            ['card', 'Karta umowy']
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setForm(id)}
-              className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${form === id ? 'bg-white text-slate-900' : 'bg-slate-700 hover:bg-slate-600'}`}
-            >
-              {label}
+      <div className="no-print sticky top-0 z-10 bg-[#1E293B] text-white px-4 py-3 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-bold text-sm">Raporty i wydruki</span>
+          <div className="flex items-center gap-2">
+            {report && (
+              <button type="button" onClick={() => downloadCSV(report)} className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold cursor-pointer">
+                Eksportuj CSV
+              </button>
+            )}
+            <button type="button" onClick={() => window.print()} className="px-4 py-1.5 rounded-lg bg-[#991B1B] hover:bg-[#B91C1C] text-xs font-bold cursor-pointer">
+              Drukuj / zapisz PDF{pages > 1 ? ` (${pages} str.)` : ''}
             </button>
-          ))}
-          {form === 'tax' && years.length > 0 && (
-            <select value={year} onChange={(e) => setYear(e.target.value)} className="px-2 py-1.5 rounded-lg text-slate-900">
-              <option value="all">Wszystkie lata</option>
-              {years.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          )}
-          {form === 'card' && (
-            <select value={contractId} onChange={(e) => setContractId(e.target.value)} className="px-2 py-1.5 rounded-lg text-slate-900 max-w-[220px]">
-              {contracts.map((c) => (
-                <option key={c.id} value={c.id}>{c.clientName} — {c.serviceName}</option>
-              ))}
-            </select>
-          )}
+            <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold cursor-pointer">
+              Zamknij
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => window.print()} className="px-4 py-1.5 rounded-lg bg-[#991B1B] hover:bg-[#B91C1C] text-xs font-bold cursor-pointer">
-            Drukuj / zapisz PDF
-          </button>
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold cursor-pointer">
-            Zamknij
-          </button>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
+          {REPORT_GROUPS.map(([group, items]) => (
+            <div key={group} className="flex flex-wrap items-center gap-1.5">
+              <span className="text-slate-400 font-semibold mr-0.5">{group}:</span>
+              {items.map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setForm(id)}
+                  className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${form === id ? 'bg-white text-slate-900' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-slate-400 font-semibold">Filtry:</span>
+          <label className="flex items-center gap-1">od <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={field} /></label>
+          <label className="flex items-center gap-1">do <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={field} /></label>
+          {[
+            ['Ten miesiąc', () => { const k = today.slice(0, 7); setFrom(`${k}-01`); setTo(toISODate(new Date(Number(k.slice(0, 4)), Number(k.slice(5, 7)), 0))); }],
+            ['Ten rok', () => { setFrom(`${today.slice(0, 4)}-01-01`); setTo(`${today.slice(0, 4)}-12-31`); }],
+            ['Wszystko', () => { setFrom(''); setTo(''); }]
+          ].map(([l, fn]) => (
+            <button key={l} type="button" onClick={fn} className="px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 cursor-pointer">{l}</button>
+          ))}
+          <select value={service} onChange={(e) => setService(e.target.value)} className={field}>
+            <option value="">Wszystkie usługi</option>
+            {serviceNames.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className={field}>
+            <option value="">Wszystkie statusy</option>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input type="search" placeholder="Szukaj klienta…" value={client} onChange={(e) => setClient(e.target.value)} className={`${field} w-40`} />
+          {form === 'clientCards' && (
+            <>
+              <input list="bbd-clients" placeholder="Jeden klient (puste = wszyscy)" value={cardClient} onChange={(e) => setCardClient(e.target.value)} className={`${field} w-56`} />
+              <datalist id="bbd-clients">{clientNames.map((c) => <option key={c} value={c} />)}</datalist>
+            </>
+          )}
+          {(form === 'clientCards' || form === 'contractCards') && (
+            <span className="text-amber-300">Każda karta drukuje się na osobnej stronie: {pages}</span>
+          )}
         </div>
       </div>
 
-      <div id="print-area" className="bg-white text-slate-900 max-w-[1000px] mx-auto my-4 p-6 sm:p-8 shadow-lg text-[11px] leading-snug">
-        {form === 'tax' && (
+      <div id="print-area" className="bg-white text-slate-900 max-w-[1100px] mx-auto my-4 p-6 sm:p-8 shadow-lg text-[11px] leading-snug">
+        {report && (
           <>
-            <Header title={`Harmonogram podatków: VAT ${schedule.cfg.vatPeriod === 'quarter' ? 'kwartalny' : 'miesięczny'}, zaliczki PIT/CIT ${schedule.cfg.pitPeriod === 'quarter' ? 'kwartalne' : 'miesięczne'}`} />
-            <p className="mb-2 text-slate-600">
-              VAT płatny do 25. dnia po {schedule.cfg.vatPeriod === 'quarter' ? 'kwartale' : 'miesiącu'}; nadwyżka VAT naliczonego
-              przechodzi na kolejny okres. Zaliczka PIT/CIT płatna do 20. dnia po {schedule.cfg.pitPeriod === 'quarter' ? 'kwartale' : 'miesiącu'}
-              {schedule.cfg.taxForm === 'ryczalt' ? ', liczona od przychodu pomniejszonego o ZUS (ryczałt).' : ', liczona narastająco od początku roku (przychody − koszty − ZUS do odliczenia).'}
-              {schedule.cfg.opening.date ? ` Bilans otwarcia na ${formatFullDate(schedule.cfg.opening.date)}.` : ''}
-            </p>
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className={pHead}>Miesiąc</th>
-                  <th className={pHead}>Przychód netto</th>
-                  <th className={pHead}>Koszty netto</th>
-                  <th className={pHead}>ZUS</th>
-                  <th className={pHead}>VAT należny</th>
-                  <th className={pHead}>VAT naliczony</th>
-                  <th className={pHead}>Nadwyżka z poprz.</th>
-                  <th className={pHead}>VAT do zapłaty</th>
-                  <th className={pHead}>Termin VAT</th>
-                  <th className={pHead}>Zaliczka PIT/CIT</th>
-                  <th className={pHead}>Termin PIT/CIT</th>
-                  <th className={pHead}>Razem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {months.length === 0 && (
-                  <tr><td className={pCell} colSpan={12}>Brak danych.</td></tr>
-                )}
-                {months.map((m) => (
-                  <tr key={m.key}>
-                    <td className={pCell}>{m.label}</td>
-                    <td className={pNum}>{formatPLN(m.revenueNet)}</td>
-                    <td className={pNum}>{formatPLN(m.costsNet)}</td>
-                    <td className={pNum}>{m.zusSocial + m.zusHealth ? formatPLN(m.zusSocial + m.zusHealth) : '—'}</td>
-                    <td className={pNum}>{formatPLN(m.vatOut)}</td>
-                    <td className={pNum}>{formatPLN(m.vatIn)}</td>
-                    <td className={pNum}>{m.vatSettle && m.vatCarryIn ? formatPLN(m.vatCarryIn) : '—'}</td>
-                    <td className={`${pNum} font-bold`}>{m.vatSettle ? formatPLN(m.vatPayable) : '—'}</td>
-                    <td className={pNum}>{m.vatSettle ? formatFullDate(m.vatDueDate) : '—'}</td>
-                    <td className={`${pNum} font-bold`}>{m.pitSettle ? formatPLN(m.pitAdvance) : '—'}</td>
-                    <td className={pNum}>{m.pitSettle ? formatFullDate(m.pitDueDate) : '—'}</td>
-                    <td className={`${pNum} font-bold`}>{m.vatSettle || m.pitSettle ? formatPLN(m.totalPayable) : '—'}</td>
+            <Header title={report.title} />
+            {report.note && <p className="mb-2 text-slate-600">{report.note}</p>}
+            <ReportTable report={report} />
+            <Signatures />
+          </>
+        )}
+
+        {form === 'tax' && (() => {
+          const months = schedule.months.filter((m) => monthOk(m.key));
+          return (
+            <>
+              <Header title={`Raport podatkowy: VAT ${schedule.cfg.vatPeriod === 'quarter' ? 'kwartalny' : 'miesięczny'}, zaliczki PIT/CIT ${schedule.cfg.pitPeriod === 'quarter' ? 'kwartalne' : 'miesięczne'}`} />
+              <p className="mb-2 text-slate-600">
+                Podatki liczone dla całej firmy (filtry usługi, statusu i klienta tu nie działają). VAT płatny do 25. dnia po {schedule.cfg.vatPeriod === 'quarter' ? 'kwartale' : 'miesiącu'};
+                nadwyżka VAT naliczonego przechodzi na kolejny okres. Zaliczka PIT/CIT do 20. dnia po {schedule.cfg.pitPeriod === 'quarter' ? 'kwartale' : 'miesiącu'}.
+                {schedule.cfg.opening.date ? ` Bilans otwarcia na ${formatFullDate(schedule.cfg.opening.date)}.` : ''}
+              </p>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    {['Miesiąc', 'Przychód netto', 'Koszty netto', 'ZUS', 'VAT należny', 'VAT naliczony', 'Nadwyżka z poprz.', 'VAT do zapłaty', 'Termin VAT', 'Zaliczka PIT/CIT', 'Termin PIT/CIT', 'Razem'].map((h) => <th key={h} className={pHead}>{h}</th>)}
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-slate-100 font-bold">
-                  <td className={pCell}>Razem</td>
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.revenueNet))}</td>
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.costsNet))}</td>
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.zusSocial + m.zusHealth))}</td>
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatOut))}</td>
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatIn))}</td>
-                  <td className={pNum} />
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.vatPayable))}</td>
-                  <td className={pNum} />
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.pitAdvance))}</td>
-                  <td className={pNum} />
-                  <td className={pNum}>{formatPLN(sum(months, (m) => m.totalPayable))}</td>
-                </tr>
-              </tfoot>
-            </table>
-            {schedule.totals.vatCarryLeft > 0 && (
-              <p className="mt-2">Nadwyżka VAT do przeniesienia na kolejny okres: <b>{formatPLN(schedule.totals.vatCarryLeft)}</b></p>
-            )}
-            <p className="mt-2 text-slate-500">
-              Data raty klienta traktowana jest jako data faktury sprzedaży. Kwoty orientacyjne, do weryfikacji z księgowością.
-            </p>
-            <Signatures />
-          </>
-        )}
-
-        {form === 'contracts' && (
-          <>
-            <Header title="Zestawienie umów i harmonogram rat" />
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className={pHead}>Klient / usługa</th>
-                  <th className={pHead}>Status</th>
-                  <th className={pHead}>Okres</th>
-                  <th className={pHead}>Netto</th>
-                  <th className={pHead}>Brutto</th>
-                  <th className={pHead}>Raty (brutto, termin, status)</th>
-                  <th className={pHead}>Koszty netto</th>
-                  <th className={pHead}>Zysk netto (szac.)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {contracts.map((ctr) => {
-                  const c = calculateContractFinancials(ctr, settings);
-                  return (
-                    <tr key={ctr.id}>
-                      <td className={pCell}><b>{ctr.clientName}</b><br />{ctr.serviceName}</td>
-                      <td className={pCell}>{ctr.status}</td>
-                      <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(ctr.startDate)}<br />{formatFullDate(ctr.endDate)}</td>
-                      <td className={pNum}>{formatPLN(c.netValue)}</td>
-                      <td className={pNum}>{formatPLN(c.grossValue)}</td>
-                      <td className={pCell}>
-                        {(ctr.installments || []).map((i) => (
-                          <div key={i.id} className="whitespace-nowrap">
-                            {formatPLN(i.amount)} • {formatFullDate(i.dueDate)} • {i.paid ? 'opłacona' : 'oczekuje'}
-                          </div>
-                        ))}
-                      </td>
-                      <td className={pNum}>{formatPLN(c.totalCostsNet)}</td>
-                      <td className={pNum}>{formatPLN(c.netProfit)}</td>
+                </thead>
+                <tbody>
+                  {months.length === 0 && <tr><td className={pCell} colSpan={12}>Brak danych.</td></tr>}
+                  {months.map((m) => (
+                    <tr key={m.key}>
+                      <td className={pCell}>{m.label}</td>
+                      <td className={pNum}>{formatPLN(m.revenueNet)}</td>
+                      <td className={pNum}>{formatPLN(m.costsNet)}</td>
+                      <td className={pNum}>{m.zusSocial + m.zusHealth ? formatPLN(m.zusSocial + m.zusHealth) : '—'}</td>
+                      <td className={pNum}>{formatPLN(m.vatOut)}</td>
+                      <td className={pNum}>{formatPLN(m.vatIn)}</td>
+                      <td className={pNum}>{m.vatSettle && m.vatCarryIn ? formatPLN(m.vatCarryIn) : '—'}</td>
+                      <td className={`${pNum} font-bold`}>{m.vatSettle ? formatPLN(m.vatPayable) : '—'}</td>
+                      <td className={pNum}>{m.vatSettle ? formatFullDate(m.vatDueDate) : '—'}</td>
+                      <td className={`${pNum} font-bold`}>{m.pitSettle ? formatPLN(m.pitAdvance) : '—'}</td>
+                      <td className={pNum}>{m.pitSettle ? formatFullDate(m.pitDueDate) : '—'}</td>
+                      <td className={`${pNum} font-bold`}>{m.vatSettle || m.pitSettle ? formatPLN(m.totalPayable) : '—'}</td>
                     </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-slate-100 font-bold">
-                  <td className={pCell} colSpan={3}>Razem ({contracts.length})</td>
-                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).netValue))}</td>
-                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).grossValue))}</td>
-                  <td className={pCell}>Wpłacono: {formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).paidGross))}</td>
-                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).totalCostsNet))}</td>
-                  <td className={pNum}>{formatPLN(sum(contracts, (x) => calculateContractFinancials(x, settings).netProfit))}</td>
-                </tr>
-              </tfoot>
-            </table>
-            <Signatures />
-          </>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-100 font-bold">
+                    <td className={pCell}>Razem</td>
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.revenueNet))}</td>
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.costsNet))}</td>
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.zusSocial + m.zusHealth))}</td>
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.vatOut))}</td>
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.vatIn))}</td>
+                    <td className={pNum} />
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.vatPayable))}</td>
+                    <td className={pNum} />
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.pitAdvance))}</td>
+                    <td className={pNum} />
+                    <td className={pNum}>{formatPLN(sum(months, (m) => m.totalPayable))}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              {schedule.totals.vatCarryLeft > 0 && (
+                <p className="mt-2">Nadwyżka VAT do przeniesienia na kolejny okres: <b>{formatPLN(schedule.totals.vatCarryLeft)}</b></p>
+              )}
+              <p className="mt-2 text-slate-500">Data raty klienta traktowana jest jako data faktury sprzedaży. Kwoty orientacyjne, do weryfikacji z księgowością.</p>
+              <Signatures />
+            </>
+          );
+        })()}
+
+        {form === 'contractCards' && (
+          fContracts.length === 0 ? <p>Brak umów dla wybranych filtrów.</p> :
+          fContracts.map((ctr, i) => (
+            <div key={ctr.id} className={i > 0 ? 'print-page-break pt-6 mt-6 border-t-4 border-dashed border-slate-200' : ''}>
+              <ContractCard contract={ctr} settings={settings} Header={({ title }) => <Header title={title} sub={false} />} />
+              <Signatures />
+            </div>
+          ))
         )}
 
-        {form === 'costs' && (
-          <>
-            <Header title="Zestawienie kosztów firmy (faktury kosztowe)" />
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className={pHead}>Data</th>
-                  <th className={pHead}>Nazwa</th>
-                  <th className={pHead}>Kategoria</th>
-                  <th className={pHead}>Produkt</th>
-                  <th className={pHead}>Netto</th>
-                  <th className={pHead}>VAT</th>
-                  <th className={pHead}>Brutto</th>
-                  <th className={pHead}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {costs.length === 0 && <tr><td className={pCell} colSpan={8}>Brak kosztów.</td></tr>}
-                {[...costs].sort((a, b) => String(a.date).localeCompare(String(b.date))).map((c) => {
-                  const cc = calculateCostFinancials(c, settings);
-                  return (
-                    <tr key={c.id}>
-                      <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(c.date)}</td>
-                      <td className={pCell}>{c.name}</td>
-                      <td className={pCell}>{c.category}</td>
-                      <td className={pCell}>{c.serviceName || 'wspólny'}</td>
-                      <td className={pNum}>{formatPLN(cc.net)}</td>
-                      <td className={pNum}>{formatPLN(cc.vat)} ({Number(c.vatRate) || 0}%)</td>
-                      <td className={pNum}>{formatPLN(cc.gross)}</td>
-                      <td className={pCell}>{c.paid ? 'zapłacono' : 'do zapłaty'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-slate-100 font-bold">
-                  <td className={pCell} colSpan={4}>Razem ({costs.length})</td>
-                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).net))}</td>
-                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).vat))}</td>
-                  <td className={pNum}>{formatPLN(sum(costs, (c) => calculateCostFinancials(c, settings).gross))}</td>
-                  <td className={pCell} />
-                </tr>
-              </tfoot>
-            </table>
-            <Signatures />
-          </>
-        )}
-
-        {form === 'card' && (
-          contract ? (() => {
-            const c = calculateContractFinancials(contract, settings);
+        {form === 'clientCards' && (
+          cardClients.length === 0 ? <p>Brak klientów dla wybranych filtrów.</p> :
+          cardClients.map((name, idx) => {
+            const list = contracts.filter((c) => c.clientName === name && (cardClient || fContracts.includes(c)));
+            const fin = list.map((c) => ({ c, f: calculateContractFinancials(c, settings) }));
+            const inst = list.flatMap((c) => (c.installments || []).map((i) => ({ ...i, service: c.serviceName }))).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+            const exp = docs.expenses.filter((e) => e.client === name);
+            const t = (f) => sum(fin, (x) => f(x.f));
+            const overdue = inst.filter((i) => !i.paid && i.dueDate && i.dueDate < today);
             return (
-              <>
-                <Header title={`Karta umowy: ${contract.clientName}`} />
+              <div key={name} className={idx > 0 ? 'print-page-break pt-6 mt-6 border-t-4 border-dashed border-slate-200' : ''}>
+                <Header title={`Karta klienta: ${name}`} sub={false} />
                 <table className="w-full border-collapse mb-3">
                   <tbody>
-                    <tr><td className={pHead}>Klient</td><td className={pCell}>{contract.clientName}</td><td className={pHead}>Usługa</td><td className={pCell}>{contract.serviceName}</td></tr>
-                    <tr><td className={pHead}>Okres</td><td className={pCell}>{formatFullDate(contract.startDate)} – {formatFullDate(contract.endDate)} ({c.durationDays} dni)</td><td className={pHead}>Status</td><td className={pCell}>{contract.status}</td></tr>
-                    <tr><td className={pHead}>Wartość netto</td><td className={pNum}>{formatPLN(c.netValue)}</td><td className={pHead}>VAT {settings.vatRate}%</td><td className={pNum}>{formatPLN(c.vatAmount)}</td></tr>
-                    <tr><td className={pHead}>Wartość brutto</td><td className={pNum}>{formatPLN(c.grossValue)}</td><td className={pHead}>Wpłacono / pozostało</td><td className={pNum}>{formatPLN(c.paidGross)} / {formatPLN(c.remainingGross)}</td></tr>
+                    <tr><td className={pHead}>Umów</td><td className={pNum}>{list.length}</td><td className={pHead}>Wartość netto</td><td className={pNum}>{formatPLN(t((f) => f.netValue))}</td><td className={pHead}>Brutto</td><td className={pNum}>{formatPLN(t((f) => f.grossValue))}</td></tr>
+                    <tr><td className={pHead}>Wpłacono</td><td className={pNum}>{formatPLN(t((f) => f.paidGross))}</td><td className={pHead}>Do zapłaty</td><td className={pNum}>{formatPLN(t((f) => f.remainingGross))}</td><td className={pHead}>w tym po terminie</td><td className={`${pNum} ${overdue.length ? 'text-rose-700 font-bold' : ''}`}>{formatPLN(sum(overdue, (i) => i.amount))}</td></tr>
+                    <tr><td className={pHead}>Koszty netto</td><td className={pNum}>{formatPLN(t((f) => f.totalCostsNet))}</td><td className={pHead}>Zysk netto (szac.)</td><td className={pNum}>{formatPLN(t((f) => f.netProfit))}</td><td className={pHead}>Marża</td><td className={pNum}>{t((f) => f.netValue) ? ((t((f) => f.netProfit) / t((f) => f.netValue)) * 100).toFixed(1) : '0.0'}%</td></tr>
                   </tbody>
                 </table>
-
-                <div className="font-bold mb-1">Harmonogram rat klienta</div>
+                <div className="font-bold mb-1">Umowy</div>
                 <table className="w-full border-collapse mb-3">
-                  <thead><tr><th className={pHead}>Rata</th><th className={pHead}>Termin (data faktury)</th><th className={pHead}>Kwota brutto</th><th className={pHead}>w tym VAT</th><th className={pHead}>VAT płatny do</th><th className={pHead}>Status</th></tr></thead>
+                  <thead><tr>{['Usługa', 'Status', 'Okres', 'Netto', 'Brutto', 'Wpłacono', 'Koszty netto', 'Zysk (szac.)'].map((h) => <th key={h} className={pHead}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {(contract.installments || []).map((i) => {
-                      const r = Number(settings.vatRate) || 0;
-                      const vat = r > 0 ? ((Number(i.amount) || 0) * r) / (100 + r) : 0;
-                      return (
-                        <tr key={i.id}>
-                          <td className={pCell}>{i.label}</td>
-                          <td className={pCell}>{formatFullDate(i.dueDate)}</td>
-                          <td className={pNum}>{formatPLN(i.amount)}</td>
-                          <td className={pNum}>{formatPLN(vat)}</td>
-                          <td className={pCell}>{i.dueDate ? formatFullDate(nextMonthDay(monthKey(i.dueDate), 25)) : '—'}</td>
-                          <td className={pCell}>{i.paid ? 'opłacona' : 'oczekuje'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-
-                <div className="font-bold mb-1">Koszty umowy</div>
-                <table className="w-full border-collapse mb-3">
-                  <thead><tr><th className={pHead}>Pozycja</th><th className={pHead}>Termin</th><th className={pHead}>Netto</th><th className={pHead}>VAT</th><th className={pHead}>Brutto</th><th className={pHead}>Status</th></tr></thead>
-                  <tbody>
-                    {c.effectiveSubCost > 0 && (
-                      <tr>
-                        <td className={pCell}>Podwykonawca: {contract.subcontractorName || '—'}</td>
-                        <td className={pCell}>{formatFullDate(contract.subDueDate)}</td>
-                        <td className={pNum}>{formatPLN(c.effectiveSubCost)}</td>
-                        <td className={pNum}>{formatPLN(c.subVat)}</td>
-                        <td className={pNum}>{formatPLN(c.subGross)}</td>
-                        <td className={pCell}>{contract.subStatus}</td>
+                    {fin.map(({ c, f }) => (
+                      <tr key={c.id}>
+                        <td className={pCell}>{c.serviceName}</td>
+                        <td className={pCell}>{c.status}</td>
+                        <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(c.startDate)} – {formatFullDate(c.endDate)}</td>
+                        <td className={pNum}>{formatPLN(f.netValue)}</td>
+                        <td className={pNum}>{formatPLN(f.grossValue)}</td>
+                        <td className={pNum}>{formatPLN(f.paidGross)}</td>
+                        <td className={pNum}>{formatPLN(f.totalCostsNet)}</td>
+                        <td className={pNum}>{formatPLN(f.netProfit)}</td>
                       </tr>
-                    )}
-                    {(contract.costs || []).map((k) => {
-                      const net = Math.max(0, Number(k.net) || 0);
-                      const vat = Math.round(net * ((Number(k.vatRate) || 0) / 100));
-                      return (
-                        <tr key={k.id}>
-                          <td className={pCell}>{k.name || 'Koszt'}</td>
-                          <td className={pCell}>{formatFullDate(k.dueDate)}</td>
-                          <td className={pNum}>{formatPLN(net)}</td>
-                          <td className={pNum}>{formatPLN(vat)}</td>
-                          <td className={pNum}>{formatPLN(net + vat)}</td>
-                          <td className={pCell}>{k.paid ? 'zapłacono' : 'do zapłaty'}</td>
-                        </tr>
-                      );
-                    })}
-                    {c.totalCostsNet === 0 && <tr><td className={pCell} colSpan={6}>Brak kosztów.</td></tr>}
+                    ))}
                   </tbody>
                 </table>
-
-                <div className="font-bold mb-1">Wynik umowy (szacunek)</div>
-                <table className="w-full border-collapse">
+                <div className="font-bold mb-1">Raty (rozrachunek z klientem)</div>
+                <table className="w-full border-collapse mb-3">
+                  <thead><tr>{['Termin', 'Usługa', 'Rata', 'Brutto', 'Status'].map((h) => <th key={h} className={pHead}>{h}</th>)}</tr></thead>
                   <tbody>
-                    <tr><td className={pHead}>VAT należny</td><td className={pNum}>{formatPLN(c.vatAmount)}</td><td className={pHead}>VAT naliczony z kosztów</td><td className={pNum}>{formatPLN(c.inputVat)}</td></tr>
-                    <tr><td className={pHead}>VAT do zapłaty</td><td className={pNum}>{formatPLN(Math.max(0, c.vatPayable))}</td><td className={pHead}>PIT/CIT {settings.pitRate}%</td><td className={pNum}>{formatPLN(c.pitAmount)}</td></tr>
-                    <tr><td className={pHead}>Koszty netto razem</td><td className={pNum}>{formatPLN(c.totalCostsNet)}</td><td className={pHead}>Zysk netto po podatkach</td><td className={`${pNum} font-bold`}>{formatPLN(c.netProfit)} ({c.netMargin.toFixed(1)}%)</td></tr>
+                    {inst.length === 0 && <tr><td className={pCell} colSpan={5}>Brak rat.</td></tr>}
+                    {inst.map((i, k) => (
+                      <tr key={k} className={!i.paid && i.dueDate < today ? 'bg-rose-50' : ''}>
+                        <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(i.dueDate)}</td>
+                        <td className={pCell}>{i.service}</td>
+                        <td className={pCell}>{i.label}</td>
+                        <td className={pNum}>{formatPLN(i.amount)}</td>
+                        <td className={pCell}>{i.paid ? 'opłacona' : i.dueDate < today ? 'po terminie' : 'oczekuje'}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-                {contract.notes && <p className="mt-2"><b>Notatki:</b> {contract.notes}</p>}
+                {exp.length > 0 && (
+                  <>
+                    <div className="font-bold mb-1">Koszty związane z klientem</div>
+                    <table className="w-full border-collapse mb-3">
+                      <thead><tr>{['Termin', 'Rodzaj', 'Nazwa', 'Netto', 'VAT', 'Brutto', 'Status'].map((h) => <th key={h} className={pHead}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {exp.map((e, k) => (
+                          <tr key={k}>
+                            <td className={`${pCell} whitespace-nowrap`}>{formatFullDate(e.date)}</td>
+                            <td className={pCell}>{e.kind}</td>
+                            <td className={pCell}>{e.name}</td>
+                            <td className={pNum}>{formatPLN(e.net)}</td>
+                            <td className={pNum}>{formatPLN(e.vat)}</td>
+                            <td className={pNum}>{formatPLN(e.gross)}</td>
+                            <td className={pCell}>{e.paid ? 'zapłacono' : 'do zapłaty'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
                 <Signatures />
-              </>
+              </div>
             );
-          })() : <p>Brak umów.</p>
+          })
         )}
       </div>
     </div>
@@ -4449,7 +4767,7 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
               title="Formularze do druku: raport podatkowy, umowy, koszty, karta umowy"
             >
               <Printer className="w-4 h-4 text-slate-300" />
-              <span className="hidden sm:inline">Drukuj</span>
+              <span className="hidden sm:inline">Raporty</span>
             </button>
 
             <button
