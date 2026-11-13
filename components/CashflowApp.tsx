@@ -4500,6 +4500,389 @@ function CostsView({ costs, settings, onAdd, onEdit, onTogglePaid }) {
 }
 
 // ============================================================================
+// POMOCNIK „LOTEK”: animowany samolocik z logo, który towarzyszy przy pracy.
+// Emocje: spokój, radość, zamyślenie, troska (zaległości), świętowanie (po zapisie), senność.
+// Odruchy w spoczynku: mruganie, ziewanie, drapanie się skrzydłem, noga na nogę, rozglądanie.
+// ============================================================================
+
+const LOTEK_HIDE_KEY = 'bbd-lotek-hidden';
+
+const LOTEK_TIPS = [
+  'Liczby nie gryzą. Najwyżej trochę łaskoczą.',
+  'Klient zapłacił? Kliknij mnie — odhaczymy ratę w 5 sekund.',
+  'VAT płacimy do 25., zaliczkę PIT/CIT do 20. Przypomnę wcześniej.',
+  'Raport dla wszystkich klientów naraz? Przycisk „Raporty” u góry.',
+  'Mała przerwa? Cash flow poczeka, kawa nie.',
+  'Każdy koszt z fakturą to mniejszy podatek. Wrzucaj je od razu.',
+  'Spokojnie, krok po kroku. Ja tu jestem.',
+  'ZUS raz w miesiącu: dwie kwoty i gotowe.'
+];
+
+function LotekFigure({ mood, action, talking }) {
+  const happy = mood === 'happy' || mood === 'celebrate';
+  const sleepy = mood === 'sleepy';
+  const worried = mood === 'worried';
+  const thinking = mood === 'thinking';
+  const yawning = action === 'yawn';
+  const crossed = action === 'legs' || sleepy;
+  const look = action === 'look' ? 2.5 : 0;
+
+  // Usta zależnie od emocji
+  let mouth = <path d="M52 64 Q58 68 64 64" stroke="#1E293B" strokeWidth="2.2" fill="none" strokeLinecap="round" />;
+  if (happy) mouth = <path d="M50 62 Q58 72 66 62 Z" fill="#991B1B" stroke="#1E293B" strokeWidth="1.8" strokeLinejoin="round" />;
+  if (worried) mouth = <path d="M52 67 Q58 62 64 67" stroke="#1E293B" strokeWidth="2.2" fill="none" strokeLinecap="round" />;
+  if (thinking) mouth = <path d="M53 66 L62 64" stroke="#1E293B" strokeWidth="2.2" fill="none" strokeLinecap="round" />;
+  if (sleepy) mouth = <ellipse cx="58" cy="66" rx="2.2" ry="1.6" fill="#1E293B" />;
+  if (talking && !sleepy) mouth = <ellipse className="bbd-mouth-talk" cx="58" cy="65" rx="4.5" ry="3.6" fill="#991B1B" stroke="#1E293B" strokeWidth="1.6" />;
+  if (yawning) mouth = <ellipse className="bbd-mouth-yawn" cx="58" cy="66" rx="5" ry="5.5" fill="#7F1D1D" stroke="#1E293B" strokeWidth="1.6" />;
+
+  const eyes = sleepy || yawning ? (
+    <>
+      <path d="M44 52 Q48 55 52 52" stroke="#1E293B" strokeWidth="2.2" fill="none" strokeLinecap="round" />
+      <path d="M62 50 Q66 53 70 50" stroke="#1E293B" strokeWidth="2.2" fill="none" strokeLinecap="round" />
+    </>
+  ) : happy ? (
+    <>
+      <path d="M44 53 Q48 48 52 53" stroke="#1E293B" strokeWidth="2.4" fill="none" strokeLinecap="round" />
+      <path d="M62 51 Q66 46 70 51" stroke="#1E293B" strokeWidth="2.4" fill="none" strokeLinecap="round" />
+    </>
+  ) : (
+    <g className="bbd-blink">
+      <ellipse cx="48" cy="52" rx="4.2" ry="5" fill="#fff" stroke="#1E293B" strokeWidth="1.6" />
+      <ellipse cx="66" cy="50" rx="4.2" ry="5" fill="#fff" stroke="#1E293B" strokeWidth="1.6" />
+      <circle cx={48.5 + look + (thinking ? 1.5 : 0)} cy={thinking ? 50.5 : 53} r="2.2" fill="#1E293B" />
+      <circle cx={66.5 + look + (thinking ? 1.5 : 0)} cy={thinking ? 48.5 : 51} r="2.2" fill="#1E293B" />
+    </g>
+  );
+
+  const brows = worried ? (
+    <>
+      <path d="M43 44 L52 46" stroke="#1E293B" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M71 41 L62 44" stroke="#1E293B" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ) : thinking ? (
+    <>
+      <path d="M43 45 Q48 42 52 44" stroke="#1E293B" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+      <path d="M62 39 Q66 36 71 39" stroke="#1E293B" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+    </>
+  ) : null;
+
+  return (
+    <svg viewBox="0 0 120 120" className="w-full h-full overflow-visible" aria-hidden="true">
+      {/* jasne tło, żeby Lotek był czytelny nad tabelami */}
+      <circle cx="60" cy="62" r="54" fill="#FFFFFF" opacity="0.92" stroke="#E2E8F0" strokeWidth="1" />
+      {/* cień na ziemi */}
+      <ellipse cx="60" cy="108" rx="24" ry="3.5" fill="#0F172A" opacity="0.12" />
+      {/* orbita z logo z karmazynowym punktem */}
+      <path d="M14 86 C30 104 82 104 108 70" stroke="#94A3B8" strokeWidth="1.5" strokeDasharray="3 3" fill="none" strokeLinecap="round" />
+      <g className="bbd-orbit">
+        <circle cx="60" cy="9" r="3.2" fill="#991B1B" />
+      </g>
+
+      <g className="bbd-float">
+        {/* nogi: zwykle albo noga na nogę */}
+        {crossed ? (
+          <g stroke="#1E293B" strokeWidth="2.4" strokeLinecap="round" fill="none">
+            <path d="M54 84 L56 100" />
+            <path d="M62 84 Q60 94 50 96" />
+            <ellipse cx="57" cy="101.5" rx="4" ry="2" fill="#1E293B" />
+            <ellipse cx="47.5" cy="96" rx="3.6" ry="1.8" fill="#1E293B" />
+          </g>
+        ) : (
+          <g stroke="#1E293B" strokeWidth="2.4" strokeLinecap="round" fill="none">
+            <path d="M53 84 L50 100" />
+            <path d="M63 84 L66 100" />
+            <ellipse cx="48.5" cy="101.5" rx="4" ry="2" fill="#1E293B" />
+            <ellipse cx="67.5" cy="101.5" rx="4" ry="2" fill="#1E293B" />
+          </g>
+        )}
+
+        {/* korpus: papierowy samolot z logo, powiększony i „przyjazny” */}
+        <path d="M104 22 L14 58 L46 68 L58 88 L66 72 L84 78 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2.4" strokeLinejoin="round" />
+        {/* zagięcia papieru */}
+        <path d="M104 22 L46 68" stroke="#CBD5E1" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M104 22 L66 72" stroke="#CBD5E1" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M46 68 L58 88 L66 72 Z" fill="#E2E8F0" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+
+        {/* policzki */}
+        {(happy || mood === 'calm') && (
+          <>
+            <ellipse cx="40" cy="60" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.7" />
+            <ellipse cx="74" cy="57" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.7" />
+          </>
+        )}
+        {brows}
+        {eyes}
+        {mouth}
+
+        {/* skrzydełko-rączka: drapanie za uchem, machanie */}
+        <g className={`bbd-arm ${action === 'scratch' ? 'bbd-arm-scratch' : ''} ${action === 'wave' || mood === 'celebrate' ? 'bbd-arm-wave' : ''}`}>
+          <path d="M82 60 L98 56 L95 64 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+        </g>
+
+        {/* dodatki emocji */}
+        {worried && <path d="M78 36 Q81 42 78 44 Q75 42 78 36 Z" fill="#7DD3FC" stroke="#0369A1" strokeWidth="1" />}
+        {thinking && <text x="80" y="32" fontSize="16" fontWeight="700" fill="#64748B">?</text>}
+        {sleepy && (
+          <g fill="#64748B" fontWeight="700">
+            <text className="bbd-zzz" x="78" y="34" fontSize="11">z</text>
+            <text className="bbd-zzz" x="84" y="28" fontSize="14" style={{ animationDelay: '0.9s' }}>Z</text>
+          </g>
+        )}
+        {mood === 'celebrate' && (
+          <g fill="#F59E0B">
+            <path className="bbd-spark" d="M20 30 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 z" />
+            <path className="bbd-spark" style={{ animationDelay: '0.4s' }} d="M100 44 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5 z" />
+            <path className="bbd-spark" style={{ animationDelay: '0.8s' }} d="M36 18 l1.2 3 3 1.2 -3 1.2 -1.2 3 -1.2 -3 -3 -1.2 3 -1.2 z" />
+          </g>
+        )}
+      </g>
+    </svg>
+  );
+}
+
+function LotekHelper({ contracts, costs, settings, userEmail, toast, onOpenAssistant, onOpenReports }) {
+  const today = toISODate(new Date());
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(LOTEK_HIDE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [mood, setMood] = useState('happy');
+  const [action, setAction] = useState('wave');
+  const [bubble, setBubble] = useState(null); // { text, cta }
+  const [typed, setTyped] = useState('');
+  const [menu, setMenu] = useState(false);
+  const [tipIdx, setTipIdx] = useState(0);
+  const [lastActive, setLastActive] = useState(Date.now());
+  const [effect, setEffect] = useState('');
+
+  // Sytuacja w liczbach: zaległości klientów, najbliższy podatek
+  const facts = useMemo(() => {
+    let overdue = 0;
+    const late = new Set();
+    contracts.forEach((c) =>
+      (c.installments || []).forEach((i) => {
+        if (!i.paid && i.dueDate && i.dueDate < today) {
+          overdue += Number(i.amount) || 0;
+          late.add(c.clientName);
+        }
+      })
+    );
+    let tax = null;
+    try {
+      tax = buildTaxSchedule(contracts, costs, settings).payments.find((p) => p.date >= today) || null;
+    } catch {
+      tax = null;
+    }
+    const taxDays = tax ? Math.round((parseDate(tax.date) - parseDate(today)) / 86400000) : null;
+    return { overdue, lateClients: late.size, tax, taxDays };
+  }, [contracts, costs, settings, today]);
+
+  const say = (text, cta, nextMood) => {
+    setBubble({ text, cta });
+    if (nextMood) setMood(nextMood);
+  };
+
+  // Powitanie i pierwsza informacja o sytuacji
+  useEffect(() => {
+    if (hidden) return;
+    const hour = new Date().getHours();
+    const hi = hour < 5 || hour >= 18 ? 'Dobry wieczór' : hour < 12 ? 'Dzień dobry' : 'Cześć';
+    const who = (userEmail || '').split('@')[0];
+    say(`${hi}${who ? `, ${who}` : ''}! Jestem Lotek. Przelecimy razem przez liczby?`, null, 'happy');
+    const t = setTimeout(() => {
+      setAction('');
+      if (facts.overdue > 0) {
+        say(`Mamy ${formatPLN(facts.overdue)} po terminie u ${facts.lateClients} klient${facts.lateClients === 1 ? 'a' : 'ów'}. Zerkniemy razem?`, 'assistant', 'worried');
+      } else if (facts.tax && facts.taxDays <= 7) {
+        say(`Za ${facts.taxDays} dni ${facts.tax.kind}: ${formatPLN(facts.tax.amount)}. Pieniądze odłożone?`, null, 'thinking');
+      } else {
+        setMood('calm');
+      }
+    }, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden]);
+
+  // Efekt pisania na maszynie: usta ruszają się, dopóki tekst się pisze
+  useEffect(() => {
+    if (!bubble) return;
+    setTyped('');
+    let i = 0;
+    const id = setInterval(() => {
+      i += 2;
+      setTyped(bubble.text.slice(0, i));
+      if (i >= bubble.text.length) clearInterval(id);
+    }, 30);
+    return () => clearInterval(id);
+  }, [bubble]);
+  const talking = Boolean(bubble) && typed.length < (bubble?.text.length || 0);
+
+  // Reakcja na zapis (komunikat toast): radość i skok
+  useEffect(() => {
+    if (!toast || hidden) return;
+    setLastActive(Date.now());
+    setEffect('bbd-jump');
+    say(`Super! ${toast}`, null, 'celebrate');
+    const t = setTimeout(() => {
+      setMood('calm');
+      setEffect('');
+    }, 2600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast]);
+
+  // Aktywność użytkownika budzi Lotka
+  useEffect(() => {
+    const wake = () => setLastActive(Date.now());
+    window.addEventListener('pointermove', wake, { passive: true });
+    window.addEventListener('keydown', wake);
+    return () => {
+      window.removeEventListener('pointermove', wake);
+      window.removeEventListener('keydown', wake);
+    };
+  }, []);
+
+  // Odruchy w spoczynku + senność po dłuższej bezczynności + co jakiś czas porada
+  useEffect(() => {
+    if (hidden) return;
+    const id = setInterval(() => {
+      const idle = Date.now() - lastActive;
+      if (idle > 90000) {
+        setMood('sleepy');
+        setAction('');
+        setBubble(null);
+        return;
+      }
+      if (mood === 'sleepy') {
+        setMood('happy');
+        setAction('wave');
+        say('Oj, przysnąłem! Już jestem, lecimy dalej.', null, 'happy');
+        return;
+      }
+      const r = Math.random();
+      if (r < 0.2) setAction('yawn');
+      else if (r < 0.4) setAction('scratch');
+      else if (r < 0.6) setAction('legs');
+      else if (r < 0.75) setAction('look');
+      else setAction('');
+      if (Math.random() < 0.18 && mood !== 'worried') {
+        const next = (tipIdx + 1) % LOTEK_TIPS.length;
+        setTipIdx(next);
+        say(LOTEK_TIPS[next], null, Math.random() < 0.5 ? 'calm' : 'happy');
+      }
+    }, 7000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden, lastActive, mood, tipIdx]);
+
+  // Dymek znika sam po chwili (chyba że ma przycisk)
+  useEffect(() => {
+    if (!bubble || bubble.cta) return;
+    const t = setTimeout(() => setBubble(null), Math.max(6000, bubble.text.length * 90));
+    return () => clearTimeout(t);
+  }, [bubble]);
+
+  const hide = (v) => {
+    setHidden(v);
+    setMenu(false);
+    try {
+      localStorage.setItem(LOTEK_HIDE_KEY, v ? '1' : '0');
+    } catch {
+      // brak pamięci przeglądarki: ustawienie tylko do odświeżenia strony
+    }
+  };
+
+  if (hidden) {
+    return (
+      <button
+        type="button"
+        onClick={() => hide(false)}
+        className="no-print fixed bottom-4 left-4 z-40 w-11 h-11 rounded-full bg-white border border-slate-300 shadow-lg hover:scale-105 transition cursor-pointer p-1"
+        title="Przywołaj Lotka"
+        aria-label="Przywołaj pomocnika Lotka"
+      >
+        <LotekFigure mood="calm" action="" talking={false} />
+      </button>
+    );
+  }
+
+  return (
+    <div className={`no-print bbd-mascot fixed bottom-3 left-3 z-40 flex items-end gap-1 pointer-events-none ${mood === 'sleepy' ? 'bbd-sleep' : ''}`}>
+      <button
+        type="button"
+        onClick={() => {
+          setLastActive(Date.now());
+          if (mood === 'sleepy') {
+            setMood('happy');
+            setAction('wave');
+            say('Jestem, jestem! Co robimy?', null, 'happy');
+            return;
+          }
+          setMenu((m) => !m);
+          setAction('wave');
+        }}
+        onAnimationEnd={() => setAction((a) => (a === 'yawn' || a === 'scratch' || a === 'wave' ? '' : a))}
+        className={`pointer-events-auto w-28 h-28 sm:w-36 sm:h-36 drop-shadow-lg cursor-pointer select-none ${effect} ${mood === 'worried' ? 'bbd-shake' : ''}`}
+        title="Lotek — kliknij, żeby coś szybko wpisać"
+        aria-label="Pomocnik Lotek"
+      >
+        <LotekFigure mood={mood} action={action} talking={talking} />
+      </button>
+
+      {(bubble || menu) && (
+        <div className="pointer-events-auto bbd-pop mb-16 max-w-[260px] bg-white border border-slate-200 rounded-2xl rounded-bl-sm shadow-xl px-3.5 py-2.5 text-xs text-slate-800">
+          {bubble && !menu && (
+            <>
+              <div className="leading-relaxed min-h-[1.2em]">{typed}</div>
+              <div className="flex items-center gap-2 mt-2">
+                {bubble.cta === 'assistant' && (
+                  <button type="button" onClick={() => { setBubble(null); onOpenAssistant(); }} className="px-2.5 py-1 rounded-lg bg-[#991B1B] hover:bg-[#B91C1C] text-white font-bold cursor-pointer">
+                    Pokaż
+                  </button>
+                )}
+                <button type="button" onClick={() => { setBubble(null); setMood('calm'); }} className="text-slate-500 hover:text-slate-900 font-semibold cursor-pointer">
+                  {bubble.cta ? 'Później' : 'OK'}
+                </button>
+              </div>
+            </>
+          )}
+          {menu && (
+            <div className="space-y-1.5">
+              <div className="font-bold text-slate-900">W czym pomóc?</div>
+              <button type="button" onClick={() => { setMenu(false); onOpenAssistant(); }} className="w-full text-left px-2.5 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 font-semibold cursor-pointer">
+                Szybko coś wpisać (wpłata, koszt, klient, ZUS)
+              </button>
+              <button type="button" onClick={() => { setMenu(false); onOpenReports(); }} className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-semibold cursor-pointer">
+                Pokaż raporty
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenu(false);
+                  const next = (tipIdx + 1) % LOTEK_TIPS.length;
+                  setTipIdx(next);
+                  say(LOTEK_TIPS[next], null, 'happy');
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-semibold cursor-pointer"
+              >
+                Powiedz coś miłego
+              </button>
+              <button type="button" onClick={() => hide(true)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer">
+                Schowaj Lotka
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // GŁÓWNA APLIKACJA: JACEK SZELA — BIZNES BEZ DRAMATÓW
 // ============================================================================
 
@@ -5380,6 +5763,16 @@ export default function App({ contracts, costs, settings, store, workspaceName, 
           </div>
         </div>
       </header>
+
+      <LotekHelper
+        contracts={contracts}
+        costs={costs}
+        settings={settings}
+        userEmail={userEmail}
+        toast={toastMessage}
+        onOpenAssistant={() => setAssistantOpen(true)}
+        onOpenReports={() => setPrintOpen(true)}
+      />
 
       {/* Powiadomienie Toast */}
       {assistantOpen && (

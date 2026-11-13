@@ -12,6 +12,38 @@
   animation: fade-in 0.2s ease-out;
 }
 
+/* Pomocnik „Lotek” (animowany samolocik z logo) */
+@keyframes bbd-float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-6px) rotate(2deg); } }
+@keyframes bbd-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+@keyframes bbd-orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes bbd-scratch { 0%, 100% { transform: rotate(0deg); } 20% { transform: rotate(-115deg); } 30% { transform: rotate(-100deg); } 40% { transform: rotate(-115deg); } 50% { transform: rotate(-100deg); } 60% { transform: rotate(-115deg); } 80% { transform: rotate(0deg); } }
+@keyframes bbd-wave { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-60deg); } 50% { transform: rotate(-30deg); } 75% { transform: rotate(-60deg); } }
+@keyframes bbd-talk { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+@keyframes bbd-yawn { 0%, 100% { transform: scale(0.4); } 30%, 70% { transform: scale(1.35); } }
+@keyframes bbd-zzz { 0% { opacity: 0; transform: translate(0, 0) scale(0.6); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(12px, -26px) scale(1.2); } }
+@keyframes bbd-jump { 0%, 100% { transform: translateY(0); } 30% { transform: translateY(-18px) rotate(-6deg); } 55% { transform: translateY(0); } 75% { transform: translateY(-7px) rotate(4deg); } }
+@keyframes bbd-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-1.5px); } 75% { transform: translateX(1.5px); } }
+@keyframes bbd-pop { from { opacity: 0; transform: translateY(6px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes bbd-spark { 0% { opacity: 0; transform: scale(0.3); } 40% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0; transform: scale(0.6) translateY(-10px); } }
+.bbd-mascot * { transform-box: fill-box; }
+.bbd-float { animation: bbd-float 3.6s ease-in-out infinite; }
+.bbd-sleep .bbd-float { animation-duration: 6s; }
+.bbd-blink { transform-origin: center; animation: bbd-blink 4.5s infinite; }
+.bbd-orbit { transform-origin: 60px 60px; transform-box: view-box; animation: bbd-orbit 9s linear infinite; }
+.bbd-arm { transform-origin: 0% 50%; }
+.bbd-arm-scratch { animation: bbd-scratch 2.4s ease-in-out; }
+.bbd-arm-wave { animation: bbd-wave 1.4s ease-in-out 2; }
+.bbd-mouth-talk { transform-origin: center; animation: bbd-talk 0.22s ease-in-out infinite; }
+.bbd-mouth-yawn { transform-origin: center; animation: bbd-yawn 2.2s ease-in-out; }
+.bbd-zzz { animation: bbd-zzz 2.6s ease-out infinite; }
+.bbd-jump { animation: bbd-jump 1.1s ease-in-out 2; }
+.bbd-shake { animation: bbd-shake 0.35s ease-in-out 4; }
+.bbd-pop { animation: bbd-pop 0.25s ease-out; }
+.bbd-spark { transform-origin: center; animation: bbd-spark 1.2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .bbd-mascot *, .bbd-pop { animation: none !important; }
+}
+
 /* Raporty do druku: drukuje się tylko #print-area, wiele stron, każda karta od nowej strony */
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
