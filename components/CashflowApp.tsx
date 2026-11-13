@@ -4597,27 +4597,38 @@ function LotekFigure({ mood, action, talking }) {
           </g>
         )}
 
-        {/* korpus: papierowy samolot z logo, powiększony i „przyjazny” */}
-        <path d="M104 22 L14 58 L46 68 L58 88 L66 72 L84 78 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2.4" strokeLinejoin="round" />
-        {/* zagięcia papieru */}
-        <path d="M104 22 L46 68" stroke="#CBD5E1" strokeWidth="1.6" strokeLinecap="round" />
-        <path d="M104 22 L66 72" stroke="#CBD5E1" strokeWidth="1.6" strokeLinecap="round" />
-        <path d="M46 68 L58 88 L66 72 Z" fill="#E2E8F0" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+        {/* ogon w kształcie T (za kadłubem) */}
+        <path d="M58 34 L60 14 L64 14 L64 34 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M44 14 L80 14" stroke="#1E293B" strokeWidth="3.2" strokeLinecap="round" />
+        <path d="M44 14 L49 14 M75 14 L80 14" stroke="#991B1B" strokeWidth="3.2" strokeLinecap="round" />
+        {/* lewe długie skrzydło szybowca */}
+        <path d="M42 60 L-2 50 L-2 54 L42 66 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M-2 50 L-2 54" stroke="#991B1B" strokeWidth="3" strokeLinecap="round" />
+        {/* kadłub-kropla */}
+        <ellipse cx="60" cy="60" rx="19" ry="24" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2.4" />
+        {/* przezroczysta owiewka kabiny */}
+        <path d="M43 52 C43 36 77 34 77 50 C77 58 43 60 43 52 Z" fill="#BFDBFE" stroke="#1E293B" strokeWidth="2" />
+        <path d="M48 44 L53 41" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
 
-        {/* policzki */}
-        {(happy || mood === 'calm') && (
-          <>
-            <ellipse cx="40" cy="60" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.7" />
-            <ellipse cx="74" cy="57" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.7" />
-          </>
-        )}
-        {brows}
-        {eyes}
-        {mouth}
+        <g transform="translate(2 0)">
+          {brows}
+          {eyes}
+        </g>
+        <g transform="translate(2 2)">
+          {(happy || mood === 'calm') && (
+            <>
+              <ellipse cx="40" cy="60" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.75" />
+              <ellipse cx="76" cy="58" rx="3.5" ry="2" fill="#FCA5A5" opacity="0.75" />
+            </>
+          )}
+          {mouth}
+        </g>
+        <path d="M46 76 Q60 82 74 76" stroke="#991B1B" strokeWidth="2.2" fill="none" strokeLinecap="round" />
 
-        {/* skrzydełko-rączka: drapanie za uchem, machanie */}
+        {/* prawe długie skrzydło-rączka: drapanie za uchem, machanie */}
         <g className={`bbd-arm ${action === 'scratch' ? 'bbd-arm-scratch' : ''} ${action === 'wave' || mood === 'celebrate' ? 'bbd-arm-wave' : ''}`}>
-          <path d="M82 60 L98 56 L95 64 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+          <path d="M78 60 L122 50 L122 54 L78 66 Z" fill="#F8FAFC" stroke="#1E293B" strokeWidth="2" strokeLinejoin="round" />
+          <path d="M122 50 L122 54" stroke="#991B1B" strokeWidth="3" strokeLinecap="round" />
         </g>
 
         {/* dodatki emocji */}
